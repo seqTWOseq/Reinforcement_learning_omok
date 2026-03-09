@@ -145,12 +145,91 @@ class HumanAgent:
             if self.current_state.flatten()[action] == 0:
                 self.clicked_action = action
 
-class Agent1:
-    """무작위 위치에 착수하는 에이전트"""
-    def __init__(self, name="Random_Black(●)"): self.name = name
+class KhyAgent:
+    """
+    각 행동마다 무수히 많은 무작위 시뮬레이션을 돌려 통계적 기댓값(가치)이 
+    가장 높은 곳을 찾아내는 에이전트입니다.
+    """
+    def __init__(self, name="MonteCarlo", simulations_per_move=20):
+        self.name = name
+        self.simulations = simulations_per_move 
+        self.board_size = 15
+
     def select_action(self, state):
-        valid = np.where(state.flatten() == 0)[0]
-        return np.random.choice(valid) if len(valid) > 0 else 0
+        """현재 상태에서 모든 빈칸의 가치를 평가하여 가장 높은 칸을 선택합니다."""
+        valid_actions = np.where(state.flatten() == 0)[0]
+        if len(valid_actions) == 0:
+            return 0
+
+        best_action = None
+        max_value = -float('inf')
+
+        print(f"\n[{self.name}] 생각 중... (총 {len(valid_actions) * self.simulations}번의 시뮬레이션 진행)")
+
+        # 1. 모든 유효한 칸(행동)에 대해 반복
+        for action in valid_actions:
+            total_score = 0
+            
+            # 2. 해당 칸에 두었을 때의 결과를 무수히 반복하여 시뮬레이션
+            for _ in range(self.simulations):
+                total_score += self._simulate(state, action)
+                
+            # 3. 평균 가치(Value) 계산
+            avg_value = total_score / self.simulations
+            
+            # 가장 가치가 높은 칸 업데이트
+            if avg_value > max_value:
+                max_value = avg_value
+                best_action = action
+
+        return best_action
+
+    def _simulate(self, state, action):
+        # 원본 상태를 오염시키지 않기 위해 깊은 복사 진행
+        sim_state = state.copy()
+        current_player = 1
+        
+        # 첫 수(action)를 가상 보드에 착수
+        r, c = action // self.board_size, action % self.board_size
+        sim_state[r, c] = current_player
+        
+        # 첫 수에 바로 이기면 더 볼 것도 없이 최고점(1.0) 반환
+        if self._check_win(sim_state, r, c, current_player):
+            return 1.0 
+            
+        # 남은 빈칸들을 파악하고 무작위 난타전을 위해 순서를 섞음 (최적화 논리)
+        empty_spots = list(np.where(sim_state.flatten() == 0)[0])
+        np.random.shuffle(empty_spots)
+        
+        active_player = 3 - current_player # 다음 턴은 상대방
+        
+        # 게임이 끝날 때까지 무작위로 돌을 둡니다. (Playout)
+        for next_action in empty_spots:
+            r, c = next_action // self.board_size, next_action % self.board_size
+            sim_state[r, c] = active_player
+            
+            if self._check_win(sim_state, r, c, active_player):
+                # 방금 돌을 둔 사람이 승리함. 그게 나라면 +1, 상대라면 -1 반환
+                return 1.0 if active_player == current_player else -1.0
+                
+            # 턴 교체
+            active_player = 3 - active_player
+            
+        # 모든 칸이 다 찰 때까지 승부가 안 나면 무승부(0점) 반환
+        return 0.0
+
+    def _check_win(self, board, row, col, player):
+        """환경 클래스에 있던 승리 판정 논리를 시뮬레이터 내부로 가져왔습니다."""
+        directions = [(0, 1), (1, 0), (1, 1), (-1, 1)]
+        for dr, dc in directions:
+            count = 1
+            for step in (1, -1):
+                r, c = row + dr * step, col + dc * step
+                while 0 <= r < self.board_size and 0 <= c < self.board_size and board[r, c] == player:
+                    count += 1
+                    r += dr * step; c += dc * step
+            if count >= 5: return True
+        return False
 
 class Agent2:
     """중앙(7, 7)과 가장 가까운 빈칸에 착수하는 에이전트"""
@@ -169,7 +248,7 @@ class Agent2:
 # ==========================================
 def main():
     env = OmokEnvGUI(render_mode="human")
-    agent1 = HumanAgent(env, name="Human_Black(●)")
+    agent1 = KhyAgent(simulations_per_move=1000)
     agent2 = Agent2()
     
     state, info = env.reset()
@@ -181,10 +260,14 @@ def main():
     while not terminated:
         # 턴에 따른 상태 반전 논리 (상대는 항상 자신이 흑돌인 것처럼 착각하게 만듦)
         if info["current_player"] == 1:
+            start_time = time.time()
             action = agent1.select_action(state)
+            end_time = time.time()
+            print(f"   ▶ {agent1.name} 착수 완료! (소요 시간: {end_time - start_time:.2f}초)")
         else:
             inverted_state = np.where(state == 1, 2, np.where(state == 2, 1, 0))
             action = agent2.select_action(inverted_state)
+            print(f"   ▶ {agent2.name} 착수 완료! (즉시 착수)")
             
         state, reward, terminated, _, info = env.step(action)
         env.render()
