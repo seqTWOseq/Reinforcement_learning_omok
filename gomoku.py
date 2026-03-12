@@ -668,6 +668,7 @@ def train_main():
 
             pbar.set_postfix({
                 "승률": f"{agent1_wins}/{current_ep} ({win_rate:.2f}%)",
+                "현재": f"{current_episode_steps}수",
                 "평균": f"{avg_steps}수",
                 "입실론": f"{agent1.epsilon:.3f}",
                 "메모리": f"{len(agent1.memory)}"
