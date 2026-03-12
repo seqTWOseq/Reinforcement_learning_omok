@@ -570,7 +570,7 @@ def main():
     
     model = DualHeadResOmokCNN()
     agent1 = KhyAgent(model)
-    agent1.load_model("khy_omok_gen1_ep2000.pth")
+    agent1.load_model("khy_omok_ep2000.pth")
     agent1.eval_mode()
     
     state, info = env.reset()
@@ -752,5 +752,5 @@ def train_main():
 # 4. 메인
 # ==========================================
 if __name__ == "__main__":
-    # main()
-    train_main()
+    main()
+    # train_main()
