@@ -709,14 +709,14 @@ def train_main():
                 agent1.replay_experience()
 
             # --- 통계 계산 및 진행바 업데이트 ---
-            if episode <= 2000:
+            if episode <= 10000:
                 current_ep = episode
-            elif episode <= 4000:
-                current_ep = episode - 2000
-            elif episode <= 8000:
-                current_ep = episode - 4000
-            else:
-                current_ep = episode - 8000
+            # elif episode <= 4000:
+            #     current_ep = episode - 2000
+            # elif episode <= 8000:
+            #     current_ep = episode - 4000
+            # else:
+            #     current_ep = episode - 8000
                 
             win_rate = (agent1_wins / current_ep) * 100
             avg_steps = total_phase_steps // current_ep
@@ -752,5 +752,5 @@ def train_main():
 # 4. 메인
 # ==========================================
 if __name__ == "__main__":
-    main()
-    # train_main()
+    # main()
+    train_main()
