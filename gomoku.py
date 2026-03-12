@@ -154,15 +154,21 @@ class Agent1:
 
 class Agent2:
     """
-    학습된 PPO 모델을 불러와 최적의 행동을 예측하는 에이전트.
+    학습된 MaskablePPO + OmokCNN 모델을 불러와 최적의 행동을 예측하는 에이전트.
 
-    [인터페이스 호환]
-    main()에서 agent2는 흑/백 색상이 반전된 inverted_state를 받습니다.
-    학습 시에도 에이전트는 항상 자신을 Player 1로 인식하므로 일관성이 유지됩니다.
+    [전처리]
+    train.py의 board_to_cnn_obs()와 완전히 동일한 로직으로
+    2D 보드(15×15) → (3, 15, 15) 3채널 이진 배열로 변환:
+      Ch0: 내 돌   (board == 1) → 1.0
+      Ch1: 상대 돌 (board == 2) → 1.0
+      Ch2: 빈칸    (board == 0) → 1.0
 
-    [폴백 정책]
-    omok_model.zip 파일이 없으면 경고 출력 후 랜덤 에이전트로 동작합니다.
-    train.py를 실행하여 모델을 생성하세요.
+    [Action Masking]
+    valid_mask: (225,) bool 1D 배열을 그대로 action_masks 파라미터로 전달.
+
+    [순환 임포트 방지]
+    train.py 가 gomoku.py 를 임포트하므로, OmokCNN 은 __init__ 안에서
+    지연 임포트(lazy import)하여 순환 의존성을 피한다.
     """
 
     def __init__(self, model_path="omok_model.zip", name="PPO_White(○)"):
@@ -170,12 +176,19 @@ class Agent2:
         self.model = None
 
         try:
-            # MaskablePPO 우선 시도, 없으면 일반 PPO로 폴백
+            # OmokCNN 지연 임포트 (train → gomoku 순환 임포트 방지)
+            from train import OmokCNN
+
             try:
                 from sb3_contrib import MaskablePPO as _PPO
             except ImportError:
                 from stable_baselines3 import PPO as _PPO
-            self.model = _PPO.load(model_path)
+
+            # custom_objects 로 OmokCNN 을 명시해야 zip 로드 시 클래스를 찾을 수 있음
+            self.model = _PPO.load(
+                model_path,
+                custom_objects={"features_extractor_class": OmokCNN},
+            )
             print(f"[{self.name}] 모델 로드 성공: {model_path}")
         except FileNotFoundError:
             print(f"[{self.name}] 경고: '{model_path}' 없음 → 랜덤 에이전트로 대체됩니다.")
@@ -185,40 +198,43 @@ class Agent2:
 
     def select_action(self, state):
         """
-        state: 2D numpy 배열 (15x15), 반전된 뷰 (자신=1, 상대=2)
-        학습 시 CNN 입력 형식 (3,15,15)으로 변환 후 predict.
+        state : 2D numpy 배열 (15×15), 반전된 뷰 (자신=1, 상대=2)
+
+        전처리: train.py board_to_cnn_obs()와 동일하게
+                (3, 15, 15) float32 CNN 입력으로 변환 후 predict.
+        마스킹: (225,) bool valid_mask 를 action_masks 로 그대로 전달.
         """
-        obs_flat = state.flatten()
-        valid = np.where(obs_flat == 0)[0]
+        obs_flat = state.flatten()          # (225,) int
+        valid    = np.where(obs_flat == 0)[0]
         if len(valid) == 0:
             return 0
 
         if self.model is None:
             return int(np.random.choice(valid))
 
-        # 학습과 동일한 CNN 입력: (3, 15, 15) 이진 채널
+        # ── board_to_cnn_obs()와 동일한 전처리 ──────────────────────
         obs_cnn = np.stack([
-            (state == 1).astype(np.float32),   # Ch0: 내 돌
-            (state == 2).astype(np.float32),   # Ch1: 상대 돌
-            (state == 0).astype(np.float32),   # Ch2: 빈칸
-        ], axis=0)
+            (state == 1).astype(np.float32),  # Ch0: 내 돌
+            (state == 2).astype(np.float32),  # Ch1: 상대 돌
+            (state == 0).astype(np.float32),  # Ch2: 빈칸
+        ], axis=0)                            # (3, 15, 15)
 
-        # Action Masking: 빈칸만 True
+        # ── Action Masking: 빈칸(0)만 True 인 (225,) bool 배열 ──────
         valid_mask = (obs_flat == 0)
 
         try:
             action, _ = self.model.predict(obs_cnn, deterministic=True, action_masks=valid_mask)
         except TypeError:
-            # 일반 PPO 폴백 (action_masks 미지원)
+            # sb3_contrib 없이 일반 PPO 로 로드된 경우 폴백
             action, _ = self.model.predict(obs_cnn, deterministic=True)
         action = int(action)
 
-        # 유효하지 않은 수 예측 시 경고 + 랜덤 폴백
+        # 유효하지 않은 수 예측 시 랜덤 폴백
         if obs_flat[action] != 0:
-            print(f"[{self.name}] ⚠️  유효하지 않은 수({action}) 예측 → 랜덤 폴백")
+            print(f"[{self.name}] 유효하지 않은 수({action}) 예측 → 랜덤 폴백")
             action = int(np.random.choice(valid))
         else:
-            print(f"[{self.name}] ✓  착수: {action} (행={action // 15}, 열={action % 15})")
+            print(f"[{self.name}] 착수: {action} (행={action // 15}, 열={action % 15})")
 
         return action
 

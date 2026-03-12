@@ -91,65 +91,95 @@ class OmokCNN(BaseFeaturesExtractor):
 # ==========================================
 # 2. 휴리스틱 봇 (Phase 1 상대방)
 # ==========================================
-def heuristic_action(board: np.ndarray, player: int, board_size: int = 15) -> int:
+class HeuristicBot:
     """
-    간단한 룰 기반 봇. 우선순위:
-      1. 내가 즉시 이길 수 있으면 → 승리수
-      2. 상대가 다음 수에 이기면   → 차단
-      3. 내 열린 4목 완성          → 공격
-      4. 상대 열린 4목 차단        → 수비
-      5. 내 열린 3목 연장          → 공격
-      6. 상대 열린 3목 차단        → 수비
-      7. 중앙 인접 가중 랜덤       → 탐색
+    규칙 기반 오목 봇. 착수 우선순위:
+      1순위: 자신이 놓으면 바로 5목이 되어 승리하는 자리
+      2순위: 상대방의 열린 3목 또는 4목을 차단하는 자리
+             (위협이 클수록 우선 — opp_count 내림차순)
+      3순위: 자신의 3목을 4목으로 확장하는 자리
+      4순위: 기존 돌에 인접한 빈칸 중 무작위 선택
     """
-    opp = 3 - player
 
-    def max_consecutive(bd, r, c, p):
-        """(r,c) 기준 4방향 최대 연속 돌 수"""
+    def __init__(self, board_size: int = 15):
+        self.board_size = board_size
+
+    # ── 내부 헬퍼: 4방향 최대 연속 돌 수 ───────────────────────────
+    def _max_consecutive(self, board: np.ndarray, r: int, c: int, player: int) -> int:
+        bs = self.board_size
         best = 0
         for dr, dc in [(0, 1), (1, 0), (1, 1), (-1, 1)]:
             cnt = 1
             for s in (1, -1):
                 nr, nc = r + dr * s, c + dc * s
-                while 0 <= nr < board_size and 0 <= nc < board_size and bd[nr, nc] == p:
-                    cnt += 1; nr += dr * s; nc += dc * s
+                while 0 <= nr < bs and 0 <= nc < bs and board[nr, nc] == player:
+                    cnt += 1
+                    nr += dr * s
+                    nc += dc * s
             best = max(best, cnt)
         return best
 
-    empty = [(r, c) for r in range(board_size) for c in range(board_size) if board[r, c] == 0]
-    if not empty:
-        return 0
+    def get_action(self, board: np.ndarray, player: int = 2) -> int:
+        """
+        현재 보드(2D int8 배열)를 분석해 최적 착수 위치를 정수(row*bs+col)로 반환.
+        player: 이 봇이 사용할 돌 번호 (기본값 2 = 흰 돌)
+        """
+        bs  = self.board_size
+        opp = 3 - player
 
-    buckets = {5: [], 'b5': [], 4: [], 'b4': [], 3: [], 'b3': []}
+        empty = [(r, c) for r in range(bs) for c in range(bs) if board[r, c] == 0]
+        if not empty:
+            return 0
 
-    for r, c in empty:
-        board[r, c] = player
-        my = max_consecutive(board, r, c, player)
-        board[r, c] = 0
+        win_moves    = []   # (r, c)          1순위: 즉시 승리
+        block_moves  = []   # (opp_cnt, r, c) 2순위: 상대 3·4목 차단
+        extend_moves = []   # (r, c)          3순위: 내 3목 → 4목 확장
 
-        board[r, c] = opp
-        op = max_consecutive(board, r, c, opp)
-        board[r, c] = 0
+        for r, c in empty:
+            # 내가 놓으면 몇 목이 되는가?
+            board[r, c] = player
+            my_cnt = self._max_consecutive(board, r, c, player)
+            board[r, c] = 0
 
-        if my >= 5:       buckets[5].append((r, c))
-        elif op >= 5:     buckets['b5'].append((r, c))
-        elif my == 4:     buckets[4].append((r, c))
-        elif op == 4:     buckets['b4'].append((r, c))
-        elif my == 3:     buckets[3].append((r, c))
-        elif op == 3:     buckets['b3'].append((r, c))
+            # 상대가 놓으면 몇 목이 되는가?
+            board[r, c] = opp
+            opp_cnt = self._max_consecutive(board, r, c, opp)
+            board[r, c] = 0
 
-    center = board_size // 2
-    for key in [5, 'b5', 4, 'b4', 3, 'b3']:
-        if buckets[key]:
-            buckets[key].sort(key=lambda rc: abs(rc[0] - center) + abs(rc[1] - center))
-            r, c = buckets[key][0]
-            return r * board_size + c
+            if my_cnt >= 5:          # 1순위
+                win_moves.append((r, c))
+            elif opp_cnt >= 3:       # 2순위 (3·4·5목 모두 포함, 내림차순 정렬)
+                block_moves.append((opp_cnt, r, c))
+            elif my_cnt == 3:        # 3순위
+                extend_moves.append((r, c))
 
-    # 중앙 인접 가중 랜덤 (중심 5칸 이내 우선)
-    near = [(r, c) for r, c in empty if abs(r - center) <= 4 and abs(c - center) <= 4]
-    pool = near if near else empty
-    r, c = pool[np.random.randint(len(pool))]
-    return r * board_size + c
+        if win_moves:
+            r, c = win_moves[0]
+            return r * bs + c
+
+        if block_moves:
+            block_moves.sort(reverse=True)   # 위협 큰 순서(5>4>3)
+            _, r, c = block_moves[0]
+            return r * bs + c
+
+        if extend_moves:
+            r, c = extend_moves[0]
+            return r * bs + c
+
+        # 4순위: 기존 돌에 인접한 빈칸 (없으면 전체 빈칸) 중 무작위 선택
+        adjacent: set = set()
+        for br in range(bs):
+            for bc in range(bs):
+                if board[br, bc] != 0:
+                    for dr in (-1, 0, 1):
+                        for dc in (-1, 0, 1):
+                            nr, nc = br + dr, bc + dc
+                            if 0 <= nr < bs and 0 <= nc < bs and board[nr, nc] == 0:
+                                adjacent.add((nr, nc))
+
+        pool = list(adjacent) if adjacent else empty
+        r, c = pool[np.random.randint(len(pool))]
+        return r * bs + c
 
 
 # ==========================================
@@ -165,11 +195,12 @@ class OpponentHolder:
 
     def __init__(self):
         self.model = None
-        self.use_heuristic = True  # Phase 1 기본값
+        self.use_heuristic = True          # Phase 1 기본값
+        self._heuristic_bot = HeuristicBot()  # HeuristicBot 인스턴스
 
     def get_action(self, board: np.ndarray, valid_mask: np.ndarray) -> int:
         if self.use_heuristic:
-            return heuristic_action(board.copy(), player=2)
+            return self._heuristic_bot.get_action(board.copy(), player=2)
 
         # Self-Play: 체크포인트 모델 없으면 랜덤
         if self.model is None or np.random.random() < 0.05:
@@ -365,14 +396,20 @@ if __name__ == "__main__":
         USE_MASKING = False
         print("[INFO] sb3-contrib 없음 → 일반 PPO 사용 (pip install sb3-contrib 권장)")
 
+    # ── GPU / CPU 디바이스 자동 감지 ────────────────────────────────
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"[INFO] 학습 디바이스: {DEVICE.upper()}")
+    if DEVICE == "cuda":
+        print(f"[INFO] GPU: {torch.cuda.get_device_name(0)}")
+
     print("=" * 55)
     print("  오목 최종 훈련 (CNN + Heuristic → Self-Play)")
     print("=" * 55)
 
     # ── 커리큘럼 설정 ────────────────────────────────────────────────
-    PHASE2_START    = 5_000_000   # 5M 스텝까지 휴리스틱 봇 상대
-    SELFPLAY_FREQ   = 300_000     # Phase 2에서 300k 스텝마다 상대방 교체
-    TOTAL_TIMESTEPS = 10_000_000  # 총 1000만 스텝
+    TOTAL_TIMESTEPS = 10_000_000          # 총 1000만 스텝
+    PHASE2_START    = TOTAL_TIMESTEPS // 2  # 50% 지점에서 Self-Play 전환
+    SELFPLAY_FREQ   = 300_000             # Phase 2에서 300k 스텝마다 상대방 교체
 
     # ── 상대방 컨테이너 생성 ────────────────────────────────────────
     holder = OpponentHolder()
@@ -420,6 +457,7 @@ if __name__ == "__main__":
             ent_coef=0.02,
             vf_coef=0.5,
             max_grad_norm=0.5,
+            device=DEVICE,
             policy_kwargs=dict(
                 features_extractor_class=OmokCNN,
                 features_extractor_kwargs=dict(features_dim=512),
