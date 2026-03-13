@@ -316,7 +316,7 @@ def find_urgent_move_fast(state, valid_moves, player):
     return best_move
 
 @njit
-def fast_rollout_fast(state, action, max_depth, max_moves=150):
+def fast_rollout_fast(state, action, max_depth, max_moves=100):
     """C언어 속도로 동작하는 MCTS 시뮬레이션 엔진 (Depth Penalty 추가)"""
     board_size = state.shape[0]
     sim_state = state.copy()
@@ -385,7 +385,7 @@ class KhyAgent:
         self.epsilon_decay = 0.999
         
         # 경험 재생 메모리
-        self.memory = deque(maxlen=50000)
+        self.memory = deque(maxlen=500000)
         self.batch_size = 64
         self.gamma = 0.99
 
@@ -456,18 +456,18 @@ class KhyAgent:
         # 내재적 보상(공격 포메이션)을 계산하여 합산할 배열 준비
         intrinsic_rewards = np.zeros(total_grids)
         for move in valid_moves:
-            # 행동마다 유발되는 공격 포메이션 가치 평가
+            # 행동마다 유발되는 공격 + 수비 포메이션 가치 평가
             intrinsic_rewards[move] = self.get_intrinsic_reward(state, move)
         
         # Policy와 Rollout Value 결합
         alpha = 0.4  # 신경망 정책 가중치
         beta = 0.4   # MCTS 롤아웃 가중치
-        gamma = 0.2  # 내재적 보상(공격성) 가중치 - 이 값을 높이면 더 공격적으로 변함
+        weight_int = 0.2 # 내재적 보상(공격성) 가중치 - 이 값을 높이면 더 공격적으로 변함
 
         final_score = np.where(
             action_visits > 0, 
-            (alpha * policy_probs) + (beta * sim_q_values) + (gamma * intrinsic_rewards), 
-            policy_probs + (gamma * intrinsic_rewards) # 롤아웃 안 된 곳도 내재적 보상은 평가
+            (alpha * policy_probs) + (beta * sim_q_values) + (weight_int * intrinsic_rewards), 
+            policy_probs + (weight_int * intrinsic_rewards) # 롤아웃 안 된 곳도 내재적 보상은 평가
         )
         final_score[~np.isin(np.arange(total_grids), valid_moves)] = -float('inf')
 
@@ -534,7 +534,7 @@ class KhyAgent:
     # 기억 장치 (데이터 증강 적용)
     def memorize_episode(self, episode_memory, final_reward):
         discounted_reward = final_reward
-        step_cost = 0.02 # 턴이 길어질수록 깎이는 '시간 지연 페널티' (유지)
+        step_cost = 0.005 # 턴이 길어질수록 깎이는 '시간 지연 페널티' (유지)
         intrinsic_weight = 0.05 # 내재적 보상의 비중을 5%로 대폭 축소 (파밍 방지)
         
         for state, action, step_reward in reversed(episode_memory):
@@ -670,7 +670,7 @@ def train_main():
     
     N = 10
     EPISODES = 10000
-    UPDATE_INTERVAL = 2000 # 통계 리셋 및 상대방 진화 주기
+    UPDATE_INTERVAL = 500 # 통계 리셋 및 상대방 진화 주기
     
     for gen in range(1, N + 1):
         print(f"\n{'='*40}\n[Generation {gen}/{N}] 제 {gen}세대\n{'='*40}")
@@ -701,7 +701,7 @@ def train_main():
                     current_player = info["current_player"]
                     
                     # 50수 제한 강제 패배 로직
-                    if current_episode_steps >= 150:
+                    if current_episode_steps >= 100:
                         terminated = True
                         info["winner"] = 0 
                         break 
@@ -755,8 +755,8 @@ def train_main():
                     agent1.memorize_episode(memory_b, -1.0)  
                     agent1.memorize_episode(memory_w, 1.0)   
                 else: 
-                    agent1.memorize_episode(memory_b, -0.5)
-                    agent1.memorize_episode(memory_w, -0.5)
+                    agent1.memorize_episode(memory_b, -0.2)
+                    agent1.memorize_episode(memory_w, -0.2)
                     
                 for _ in range(4):
                     agent1.replay_experience()
@@ -777,20 +777,21 @@ def train_main():
                 
                 agent1.decay_epsilon()
 
-                # 모델 체크포인트 저장 (1000판 주기)
-                if episode % 1000 == 0:
-                    agent1.save_model(f"khy_omok_ep{episode}.pth")
-                    pbar.write(f"{episode}판: 모델 체크포인트")
-
-            # 200판 구간 종료 시 진행바 닫기
+            # 500판 구간 종료 시 진행바 닫기
             pbar.close()
             
             # --- 200판 종료 직후: 상대방 진화 및 탐험률 롤백 ---
             if phase_end < EPISODES: # 마지막 판이 아닐 때만 업데이트 수행
-                agent2_self.model.load_state_dict(agent1.model.state_dict())
-                agent1.epsilon = 0.1 # 과적합 방지를 위해 새로운 수 탐색 허용
+                if win_rate >= 55.0:
+                    agent1.save_model(f"khy_omok_ep{phase_end}.pth")
+                    agent2_self.model.load_state_dict(agent1.model.state_dict())
+                    update_msg = "상대방 진화 완료 (승률 55% 돌파)"
+                else:
+                    update_msg = "상대방 유지 (승률 부족으로 진화 보류)"
+                    
+                agent1.epsilon = 0.3 
                 agent1.epsilon_decay = 0.998
-                print(f"[업데이트] {phase_end}판 종료: [입실론 롤백: {agent1.epsilon:.3f}]\n")
+                print(f"[업데이트] {phase_end}판 종료: {update_msg} / [입실론 롤백: {agent1.epsilon:.3f}]\n")
 
         # 10,000판 (1세대) 종료 후 최종 모델 저장
         agent1.save_model(f"khy_omok_gen{gen}_final.pth")
