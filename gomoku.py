@@ -243,6 +243,8 @@ class HeuristicAgent:
                 
         return score
 
+# =================================================================
+
 @njit
 def check_pattern_fast(state, r, c, player, target, open_ends_req):
     """C언어 속도로 동작하는 패턴 확인 함수"""
@@ -432,7 +434,7 @@ class KhyAgent:
         policy_probs = F.softmax(policy_logits, dim=0).cpu().numpy()
 
         # MCTS 시뮬레이션
-        num_simulations = 100
+        num_simulations = 50
         action_visits = np.zeros(total_grids)
         action_wins = np.zeros(total_grids)
 
