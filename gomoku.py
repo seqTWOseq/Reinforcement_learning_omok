@@ -789,7 +789,7 @@ def train_main():
                 else:
                     update_msg = "상대방 유지 (승률 부족으로 진화 보류)"
                     
-                agent1.epsilon = 0.3 
+                agent1.epsilon = 0.2
                 agent1.epsilon_decay = 0.998
                 print(f"[업데이트] {phase_end}판 종료: {update_msg} / [입실론 롤백: {agent1.epsilon:.3f}]\n")
 
