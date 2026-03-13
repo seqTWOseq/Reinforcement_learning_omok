@@ -655,7 +655,7 @@ def train_main():
     # 학습할 메인 에이전트
     model1 = DualHeadResOmokCNN()  
     agent1 = KhyAgent(model1)
-    # agent1.load_model("khy_omok_ep1000.pth")
+    agent1.load_model("khy_omok_ep1000.pth")
     print(f"[Device 확인] {agent1.device}")
     agent1.train_mode()
     
@@ -697,48 +697,42 @@ def train_main():
                 while not terminated:
                     current_player = info["current_player"]
                     
-                    # 50수 제한 강제 패배 로직 (빠른 승리 유도)
+                    # 50수 제한 강제 패배 로직
                     if current_episode_steps >= 50:
                         terminated = True
                         info["winner"] = 0 
                         break 
                     
+                    # 핵심: 현재 플레이어의 시점에 맞게 보드판 정규화 (내 돌은 항상 1, 상대는 2)
+                    if current_player == 2:
+                        canonical_state = np.where(state != 0, 3 - state, 0)
+                    else:
+                        canonical_state = state.copy()
+                        
                     is_opening = current_episode_steps < 2
 
-                    if current_player == agent1_color: 
-                        # agent1의 턴
-                        if is_opening:
-                            # 초반에는 합리적인 빈칸 중 아무데나 랜덤하게 둠
-                            valid_moves = np.where(state.flatten() == 0)[0]
-                            action = np.random.choice(valid_moves)
-                        else:
-                            action = agent1.select_action(state)
-                            
-                        step_reward = agent1.get_intrinsic_reward(state, action)
+                    # 현재 턴이 메인 에이전트인지, 과거의 나(상대방)인지 판별
+                    is_agent1_turn = (current_player == agent1_color)
+                    active_agent = agent1 if is_agent1_turn else agent2_self
+                    
+                    # 항상 '내 돌이 1'인 정규화된 보드판(canonical_state)으로 판단
+                    if is_opening:
+                        valid_moves = np.where(canonical_state.flatten() == 0)[0]
+                        action = np.random.choice(valid_moves)
+                    else:
+                        action = active_agent.select_action(canonical_state)
                         
-                        # 자신이 흑이면 memory_b에, 백이면 memory_w에 저장
-                        if agent1_color == 1:
-                            memory_b.append((state.copy(), action, step_reward))
-                        else:
-                            memory_w.append((state.copy(), action, step_reward))
-                            
-                    else: 
-                        # agent2_self (상대방)의 턴
-                        inverted_state = np.where(state != 0, 3 - state, 0)
-                        
-                        if is_opening:
-                            valid_moves = np.where(inverted_state.flatten() == 0)[0]
-                            action = np.random.choice(valid_moves)
-                        else:
-                            action = agent2_self.select_action(inverted_state) 
-                            
-                        step_reward = agent1.get_intrinsic_reward(inverted_state, action)
-                        
-                        if agent1_color == 1:
-                            memory_w.append((inverted_state.copy(), action, step_reward))
-                        else:
-                            memory_b.append((inverted_state.copy(), action, step_reward))
+                    # 보상 계산 역시 정규화된 보드판 기준 (agent1의 로직 공유)
+                    step_reward = agent1.get_intrinsic_reward(canonical_state, action)
+                    
+                    # 메모리 저장: CNN이 헷갈리지 않게 무조건 '정규화된 상태'를 저장
+                    # 현재 흑 차례면 memory_b에, 백 차례면 memory_w에 분류
+                    if current_player == 1:
+                        memory_b.append((canonical_state, action, step_reward))
+                    else:
+                        memory_w.append((canonical_state, action, step_reward))
 
+                    # 실제 게임 환경은 원래 action대로 진행
                     next_state, reward, terminated, _, info = env.step(action)
                     state = next_state
                     current_episode_steps += 1
@@ -747,8 +741,11 @@ def train_main():
 
                 # --- 게임 종료 후: 승패 기록 및 복습 ---
                 winner = info.get("winner")
-                if winner == 1:
+                if winner == agent1_color:
                     agent1_wins += 1
+
+                # 데이터 증강 및 양방향 학습 로직 (기존 유지 - 완벽함)
+                if winner == 1:
                     agent1.memorize_episode(memory_b, 1.0)   
                     agent1.memorize_episode(memory_w, -1.0)  
                 elif winner == 2:
