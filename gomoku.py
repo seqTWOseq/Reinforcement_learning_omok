@@ -766,7 +766,7 @@ def train_main():
                 else:
                     agent1.memorize_episode(memory_w, final_reward)
                     
-                for _ in range(4):
+                for _ in range(8):
                     agent1.replay_experience()
 
                 # --- 통계 계산 (1~10000판 누적이 아닌, 현재 200판 구간 내의 통계) ---
