@@ -658,7 +658,7 @@ def train_main():
     # 학습할 메인 에이전트
     model1 = DualHeadResOmokCNN()  
     agent1 = KhyAgent(model1)
-    # agent1.load_model("khy_omok_ep1500.pth")
+    agent1.load_model("khy_omok_eP500.pth")
     print(f"[Device 확인] {agent1.device}")
     agent1.train_mode()
     
@@ -676,7 +676,7 @@ def train_main():
         print(f"\n{'='*40}\n[Generation {gen}/{N}] 제 {gen}세대\n{'='*40}")
         
         # 세대 시작 시 탐험률 초기화 및 진행률 표시줄 생성
-        agent1.epsilon, agent1.epsilon_decay = 0.3, 0.991
+        agent1.epsilon, agent1.epsilon_decay = 0.0, 1.0
         
         # 10,000판을 500판 단위로 쪼개어 루프 실행 (총 20개의 구간)
         for phase_start in range(1, EPISODES + 1, UPDATE_INTERVAL):
@@ -806,8 +806,8 @@ def train_main():
                 else:
                     update_msg = "상대방 유지 (승률 부족으로 진화 보류)"
                     
-                agent1.epsilon = 0.3
-                agent1.epsilon_decay = 0.991
+                agent1.epsilon = 0.0
+                agent1.epsilon_decay = 1.0
                 print(f"[업데이트] {phase_end}판 종료: {update_msg} / [입실론 롤백: {agent1.epsilon:.3f}]\n")
 
         # 10,000판 (1세대) 종료 후 최종 모델 저장
