@@ -316,7 +316,7 @@ def find_urgent_move_fast(state, valid_moves, player):
     return best_move
 
 @njit
-def fast_rollout_fast(state, action, max_depth, max_moves=400):
+def fast_rollout_fast(state, action, max_depth, max_moves=800):
     """극단적으로 최적화된 초고속 MCTS 시뮬레이션 엔진"""
     board_size = state.shape[0]
     sim_state = state.copy()
@@ -384,7 +384,7 @@ class KhyAgent:
         
         # 경험 재생 메모리
         self.memory = deque(maxlen=100000)
-        self.batch_size = 512
+        self.batch_size = 1024
         self.gamma = 0.99
 
     # 행동 선택 로직
@@ -661,7 +661,7 @@ def train_main():
     # 학습할 메인 에이전트
     model1 = DualHeadResOmokCNN()  
     agent1 = KhyAgent(model1)
-    # agent1.load_model("khy_omok_ep5500.pth")
+    agent1.load_model("khy_omok_ep4000.pth")
     print(f"[Device 확인] {agent1.device}")
     agent1.train_mode()
     
