@@ -316,7 +316,7 @@ def find_urgent_move_fast(state, valid_moves, player):
     return best_move
 
 @njit
-def fast_rollout_fast(state, action, max_depth, max_moves=200):
+def fast_rollout_fast(state, action, max_depth, max_moves=400):
     """극단적으로 최적화된 초고속 MCTS 시뮬레이션 엔진"""
     board_size = state.shape[0]
     sim_state = state.copy()
@@ -439,7 +439,7 @@ class KhyAgent:
             policy_probs = policy_probs / np.sum(policy_probs[valid_moves]) # 확률 정규화
 
         # MCTS 시뮬레이션
-        num_simulations = 200 # [핵심 수정 2] 시뮬레이션 횟수 상향 (수읽기 파워 증폭)
+        num_simulations = 400 # [핵심 수정 2] 시뮬레이션 횟수 상향 (수읽기 파워 증폭)
         action_visits = np.zeros(total_grids)
         action_wins = np.zeros(total_grids)
 
@@ -450,7 +450,7 @@ class KhyAgent:
             sim_action = np.random.choice(valid_moves, p=probs)
             
             # [핵심 수정 4] 깊이 연장 (최대 20수 앞까지 내다봄)
-            reward = fast_rollout_fast(state, sim_action, max_depth=15)
+            reward = fast_rollout_fast(state, sim_action, max_depth=20)
             action_visits[sim_action] += 1
             action_wins[sim_action] += reward
         
@@ -661,7 +661,7 @@ def train_main():
     # 학습할 메인 에이전트
     model1 = DualHeadResOmokCNN()  
     agent1 = KhyAgent(model1)
-    # agent1.load_model("khy_omok_ep3000.pth")
+    agent1.load_model("khy_omok_ep500.pth")
     print(f"[Device 확인] {agent1.device}")
     agent1.train_mode()
     
@@ -801,7 +801,7 @@ def train_main():
             
             # --- 200판 종료 직후: 상대방 진화 및 탐험률 롤백 ---
             if phase_end < EPISODES: # 마지막 판이 아닐 때만 업데이트 수행
-                if win_rate >= 55.0:
+                if win_rate >= 55.0 and decisive_games >= 100:
                     agent1.save_model(f"khy_omok_ep{phase_end}.pth")
                     agent2_self.model.load_state_dict(agent1.model.state_dict())
                     agent1.memory.clear()
