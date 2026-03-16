@@ -384,7 +384,7 @@ class KhyAgent:
         
         # 경험 재생 메모리
         self.memory = deque(maxlen=500000)
-        self.batch_size = 64
+        self.batch_size = 512
         self.gamma = 0.99
 
     # 행동 선택 로직
@@ -661,7 +661,7 @@ def train_main():
     # 학습할 메인 에이전트
     model1 = DualHeadResOmokCNN()  
     agent1 = KhyAgent(model1)
-    agent1.load_model("khy_omok_ep500.pth")
+    # agent1.load_model("khy_omok_ep5500.pth")
     print(f"[Device 확인] {agent1.device}")
     agent1.train_mode()
     

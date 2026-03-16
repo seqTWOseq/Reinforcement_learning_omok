@@ -24,21 +24,21 @@ class DualHeadResOmokCNN(nn.Module):
         self.board_size = board_size
         
         # 1. 공통 특성 추출기 (작성하신 몸통 구조)
-        self.conv_input = nn.Conv2d(1, 128, kernel_size=3, padding=1)
-        self.bn_input = nn.BatchNorm2d(128)
+        self.conv_input = nn.Conv2d(1, 64, kernel_size=3, padding=1)
+        self.bn_input = nn.BatchNorm2d(64)
         
-        self.res1 = OmokResBlock(128)
-        self.res2 = OmokResBlock(128)
-        self.res3 = OmokResBlock(128)
-        self.res4 = OmokResBlock(128)
-        self.res5 = OmokResBlock(128)
-        self.res6 = OmokResBlock(128)
-        self.res7 = OmokResBlock(128)
+        self.res1 = OmokResBlock(64)
+        self.res2 = OmokResBlock(64)
+        self.res3 = OmokResBlock(64)
+        self.res4 = OmokResBlock(64)
+        # self.res5 = OmokResBlock(128)
+        # self.res6 = OmokResBlock(128)
+        # self.res7 = OmokResBlock(128)
         
         # 2. Policy Network (다음 수 후보 확률 제안)
         # 1x1 Conv를 사용해 채널을 확 줄여 연산량을 최적화하는 것이 정석입니다.
         self.policy_head = nn.Sequential(
-            nn.Conv2d(128, 2, kernel_size=1), 
+            nn.Conv2d(64, 2, kernel_size=1), 
             nn.BatchNorm2d(2),
             nn.ReLU(),
             nn.Flatten(),
@@ -47,7 +47,7 @@ class DualHeadResOmokCNN(nn.Module):
         
         # 3. Value Network (현재 판세 승률 추정: -1.0 ~ 1.0)
         self.value_head = nn.Sequential(
-            nn.Conv2d(128, 1, kernel_size=1), 
+            nn.Conv2d(64, 1, kernel_size=1), 
             nn.BatchNorm2d(1),
             nn.ReLU(),
             nn.Flatten(),
@@ -69,6 +69,7 @@ class DualHeadResOmokCNN(nn.Module):
         x = self.res1(x)
         x = self.res2(x)
         x = self.res3(x)
+        x = self.res4(x)
         
         # 머리 두 개로 나뉘어 출력
         policy_logits = self.policy_head(x)
