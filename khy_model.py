@@ -30,6 +30,10 @@ class DualHeadResOmokCNN(nn.Module):
         self.res1 = OmokResBlock(128)
         self.res2 = OmokResBlock(128)
         self.res3 = OmokResBlock(128)
+        self.res4 = OmokResBlock(128)
+        self.res5 = OmokResBlock(128)
+        self.res6 = OmokResBlock(128)
+        self.res7 = OmokResBlock(128)
         
         # 2. Policy Network (다음 수 후보 확률 제안)
         # 1x1 Conv를 사용해 채널을 확 줄여 연산량을 최적화하는 것이 정석입니다.

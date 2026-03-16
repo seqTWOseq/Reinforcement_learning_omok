@@ -316,8 +316,8 @@ def find_urgent_move_fast(state, valid_moves, player):
     return best_move
 
 @njit
-def fast_rollout_fast(state, action, max_depth, max_moves=100):
-    """C언어 속도로 동작하는 MCTS 시뮬레이션 엔진 (Depth Penalty 추가)"""
+def fast_rollout_fast(state, action, max_depth, max_moves=200):
+    """극단적으로 최적화된 초고속 MCTS 시뮬레이션 엔진"""
     board_size = state.shape[0]
     sim_state = state.copy()
     r = action // board_size
@@ -330,47 +330,45 @@ def fast_rollout_fast(state, action, max_depth, max_moves=100):
             if sim_state[i, j] != 0:
                 current_stones += 1
                 
-    # 내가 방금 둔 수로 즉시 승리 (최고 보상)
+    # 내가 방금 둔 수로 즉시 승리
     if check_pattern_fast(sim_state, r, c, 1, 5, 0):
         return 1.0 
         
     current_player = 2
-    # 탐색 깊이에 따른 페널티 가중치 (한 수당 0.05씩 감가)
     depth_penalty_weight = 0.05 
 
+    # [최적화 1] 매 턴 np.where를 호출하지 않고, 처음에 한 번만 빈칸 목록을 추출
+    valid_moves = np.where(sim_state.flatten() == 0)[0]
+    num_valid = len(valid_moves)
+
     for depth in range(max_depth):
-        # 50수에 도달하면 강력한 페널티 부여 (-0.8)
-        if current_stones >= max_moves:
-            return -0.8
-            
-        valid_moves = np.where(sim_state.flatten() == 0)[0]
-        if len(valid_moves) == 0:
-            break 
-            
-        urgent_move = find_urgent_move_fast(sim_state, valid_moves, current_player)
+        if current_stones >= max_moves or num_valid == 0:
+            return -0.8 if current_stones >= max_moves else 0.0
         
-        if urgent_move != -1:
-            sim_action = urgent_move
-        else:
-            sim_action = np.random.choice(valid_moves)
+        # [최적화 3] O(1) 속도로 빈칸 뽑고 삭제하기 (배열 새로고침 방지)
+        idx = np.random.randint(num_valid)
+        sim_action = valid_moves[idx]
+        
+        # 뽑은 빈칸을 배열 맨 뒤의 값과 바꾸고, 길이를 1 줄임 (초고속 삭제 기법)
+        valid_moves[idx] = valid_moves[num_valid - 1]
+        num_valid -= 1
             
         sr = sim_action // board_size
         sc = sim_action % board_size
         sim_state[sr, sc] = current_player
         current_stones += 1 
         
-        # 누군가 승리했을 때의 처리
+        # 승패 확인 (이 연산 하나만 남김)
         if check_pattern_fast(sim_state, sr, sc, current_player, 5, 0):
-            # 핵심: 늦게 이길수록 보상이 줄어들고, 늦게 질수록 페널티가 줄어듦
             penalty = depth * depth_penalty_weight
             if current_player == 1:
-                return 1.0 - penalty # 빨리 이길수록 1.0에 가까움
+                return 1.0 - penalty 
             else:
-                return -1.0 + penalty # 빨리 질수록 -1.0에 가까움 (최대한 버티도록)
+                return -1.0 + penalty 
             
         current_player = 3 - current_player
         
-    return 0.0 
+    return 0.0
     
 class KhyAgent:
     def __init__(self, model):
@@ -414,7 +412,7 @@ class KhyAgent:
             
         # 위급 수 우선 확인 (Numba 함수 호출)
         urgent_move = find_urgent_move_fast(state, valid_moves, player=1)
-        if urgent_move != -1: # None 대신 -1로 체크
+        if urgent_move != -1: 
             return urgent_move
 
         # CNN 가치 및 정책 평가
@@ -433,21 +431,26 @@ class KhyAgent:
         # Softmax를 적용해 행동 확률 분포 획득
         policy_probs = F.softmax(policy_logits, dim=0).cpu().numpy()
 
+        # [핵심 수정 1] Epsilon 무작위 탐험을 버리고 알파제로식 디리클레 노이즈 주입
+        if self.model.training:
+            noise = np.random.dirichlet([0.3] * len(valid_moves))
+            # 기존 신경망의 추천 확률 75%에 상상력(노이즈) 25%를 섞음
+            policy_probs[valid_moves] = 0.75 * policy_probs[valid_moves] + 0.25 * noise
+            policy_probs = policy_probs / np.sum(policy_probs[valid_moves]) # 확률 정규화
+
         # MCTS 시뮬레이션
-        num_simulations = 50
+        num_simulations = 200 # [핵심 수정 2] 시뮬레이션 횟수 상향 (수읽기 파워 증폭)
         action_visits = np.zeros(total_grids)
         action_wins = np.zeros(total_grids)
 
         for _ in range(num_simulations):
-            if np.random.rand() <= self.epsilon:
-                sim_action = np.random.choice(valid_moves)
-            else:
-                probs = policy_probs[valid_moves]
-                probs = probs / np.sum(probs)
-                sim_action = np.random.choice(valid_moves, p=probs)
+            # [핵심 수정 3] Epsilon 분기문 완전히 삭제 (오직 신경망의 지능적 확률로만 선택)
+            probs = policy_probs[valid_moves]
+            probs = probs / np.sum(probs)
+            sim_action = np.random.choice(valid_moves, p=probs)
             
-            # Numba로 최적화된 빠른 롤아웃 함수 호출
-            reward = fast_rollout_fast(state, sim_action, max_depth=5)
+            # [핵심 수정 4] 깊이 연장 (최대 20수 앞까지 내다봄)
+            reward = fast_rollout_fast(state, sim_action, max_depth=15)
             action_visits[sim_action] += 1
             action_wins[sim_action] += reward
         
@@ -462,7 +465,7 @@ class KhyAgent:
         # Policy와 Rollout Value 결합
         alpha = 0.4  # 신경망 정책 가중치
         beta = 0.4   # MCTS 롤아웃 가중치
-        weight_int = 0.2 # 내재적 보상(공격성) 가중치 - 이 값을 높이면 더 공격적으로 변함
+        weight_int = 0.2 # 내재적 보상(공격성) 가중치
 
         final_score = np.where(
             action_visits > 0, 
@@ -613,7 +616,7 @@ def main():
     
     model = DualHeadResOmokCNN()
     agent1 = KhyAgent(model)
-    agent1.load_model("khy_omok_ep1000.pth")
+    agent1.load_model("khy_omok_gen1_final.pth")
     agent1.eval_mode()
     
     state, info = env.reset()
@@ -658,7 +661,7 @@ def train_main():
     # 학습할 메인 에이전트
     model1 = DualHeadResOmokCNN()  
     agent1 = KhyAgent(model1)
-    agent1.load_model("khy_omok_eP500.pth")
+    # agent1.load_model("khy_omok_ep3000.pth")
     print(f"[Device 확인] {agent1.device}")
     agent1.train_mode()
     
