@@ -616,7 +616,7 @@ def main():
     
     model = DualHeadResOmokCNN()
     agent1 = KhyAgent(model)
-    agent1.load_model("khy_omok_ep5000.pth")
+    agent1.load_model("khy_omok_final.pth")
     agent1.eval_mode()
     
     state, info = env.reset()
@@ -661,7 +661,7 @@ def train_main():
     # 학습할 메인 에이전트
     model1 = DualHeadResOmokCNN()  
     agent1 = KhyAgent(model1)
-    agent1.load_model("khy_omok_ep4000.pth")
+    agent1.load_model("khy_omok_fianl.pth")
     print(f"[Device 확인] {agent1.device}")
     agent1.train_mode()
     
