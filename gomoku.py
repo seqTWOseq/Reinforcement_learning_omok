@@ -388,7 +388,7 @@ class KhyAgent:
         self.gamma = 0.99
 
     # 행동 선택 로직
-    def select_action(self, state):
+    def select_action(self, state, move_count=0):
         board_size = state.shape[0]
         total_grids = board_size * board_size 
         
@@ -411,9 +411,9 @@ class KhyAgent:
         valid_moves = np.array(list(sensible_moves))
             
         # 위급 수 우선 확인 (Numba 함수 호출)
-        urgent_move = find_urgent_move_fast(state, valid_moves, player=1)
-        if urgent_move != -1: 
-            return urgent_move
+        # urgent_move = find_urgent_move_fast(state, valid_moves, player=1)
+        # if urgent_move != -1: 
+        #     return urgent_move
 
         # CNN 가치 및 정책 평가
         state_tensor = torch.FloatTensor(state).unsqueeze(0).unsqueeze(0).to(self.device)
@@ -439,7 +439,7 @@ class KhyAgent:
             policy_probs = policy_probs / np.sum(policy_probs[valid_moves]) # 확률 정규화
 
         # MCTS 시뮬레이션
-        num_simulations = 400 # [핵심 수정 2] 시뮬레이션 횟수 상향 (수읽기 파워 증폭)
+        num_simulations = 800 # [핵심 수정 2] 시뮬레이션 횟수 상향 (수읽기 파워 증폭)
         action_visits = np.zeros(total_grids)
         action_wins = np.zeros(total_grids)
 
@@ -474,7 +474,22 @@ class KhyAgent:
         )
         final_score[~np.isin(np.arange(total_grids), valid_moves)] = -float('inf')
 
-        return np.argmax(final_score)
+        if self.model.training:
+            # 웜 스타트 직후이므로, 탐험을 충분히 할 수 있게 초반 20수까지 온도를 1.0으로 둡니다.
+            tau = 1.0 if move_count < 20 else 0.1
+            
+            valid_scores = final_score[valid_moves]
+            
+            # 지수 함수 오버플로우를 막기 위해 최댓값을 빼고 Softmax 계산
+            valid_scores = valid_scores - np.max(valid_scores) 
+            exp_scores = np.exp(valid_scores / tau)
+            action_probs = exp_scores / np.sum(exp_scores)
+            
+            # 온도에 의해 계산된 확률 분포(action_probs)를 바탕으로 행동 무작위(가중치) 선택
+            return np.random.choice(valid_moves, p=action_probs)
+        else:
+            # 실전 평가 모드(과거의 나)일 때는 얄짤없이 무조건 가장 좋은 수만 둡니다.
+            return np.argmax(final_score)
     
     # 내재적 보상 (1:1 공수 완벽 밸런스 평가)
     def get_intrinsic_reward(self, state, action):
@@ -727,7 +742,7 @@ def train_main():
                         valid_moves = np.where(canonical_state.flatten() == 0)[0]
                         action = np.random.choice(valid_moves)
                     else:
-                        action = active_agent.select_action(canonical_state)
+                        action = active_agent.select_action(canonical_state, move_count=current_episode_steps)
                         
                     # 보상 계산 역시 정규화된 보드판 기준 (agent1의 로직 공유)
                     step_reward = agent1.get_intrinsic_reward(canonical_state, action)
