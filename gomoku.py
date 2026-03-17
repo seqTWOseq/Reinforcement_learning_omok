@@ -282,62 +282,22 @@ def find_urgent_move_fast(state, valid_moves, player):
     board_size = state.shape[0]
     opponent = 3 - player
     best_move = -1
-    best_priority = 5
 
     for i in range(len(valid_moves)):
         move = valid_moves[i]
         r = move // board_size
         c = move % board_size
         
-        # 1순위: 승리 확정
+        # 1순위: 내가 두면 바로 승리 (5목 완성)
         if check_pattern_fast(state, r, c, player, 5, 0):
             return move
         
-        # 2순위: 상대 승리 방어
-        if best_priority > 2 and check_pattern_fast(state, r, c, opponent, 5, 0):
+        # 2순위: 상대가 두면 바로 패배 (상대 5목 완성 차단)
+        # 단, 내가 당장 이길 수 있는 수가 있다면 그게 우선이므로 1순위 아래에 배치
+        if best_move == -1 and check_pattern_fast(state, r, c, opponent, 5, 0):
             best_move = move
-            best_priority = 2
-            continue
-        
-        # 3순위: 상대 양수겸장 차단
-        if best_priority > 3:
-            threat_count = 0
-            if check_pattern_fast(state, r, c, opponent, 4, 0): threat_count += 1
-            if check_pattern_fast(state, r, c, opponent, 3, 2): threat_count += 1
-            if threat_count >= 2:
-                best_move = move
-                best_priority = 3
-                continue
-        
-        # 4순위: 상대 열린 4목 방어
-        if best_priority > 4 and check_pattern_fast(state, r, c, opponent, 4, 2):
-            best_move = move
-            best_priority = 4
 
     return best_move
-
-# @njit
-# def find_urgent_move_fast(state, valid_moves, player):
-#     """C언어 속도로 동작하는 위급 수 탐색 함수 (Numba는 None을 쓸 수 없어 -1 반환)"""
-#     board_size = state.shape[0]
-#     opponent = 3 - player
-#     best_move = -1
-
-#     for i in range(len(valid_moves)):
-#         move = valid_moves[i]
-#         r = move // board_size
-#         c = move % board_size
-        
-#         # 1순위: 내가 두면 바로 승리 (5목 완성)
-#         if check_pattern_fast(state, r, c, player, 5, 0):
-#             return move
-        
-#         # 2순위: 상대가 두면 바로 패배 (상대 5목 완성 차단)
-#         # 단, 내가 당장 이길 수 있는 수가 있다면 그게 우선이므로 1순위 아래에 배치
-#         if best_move == -1 and check_pattern_fast(state, r, c, opponent, 5, 0):
-#             best_move = move
-
-#     return best_move
 
 @njit
 def fast_rollout_fast(state, action, max_depth, max_moves=800):
@@ -498,31 +458,18 @@ class KhyAgent:
         )
         final_score[~np.isin(np.arange(total_grids), valid_moves)] = -float('inf')
 
-        if self.model.training:
-            # 웜 스타트 직후이므로, 탐험을 충분히 할 수 있게 초반 20수까지 온도를 1.0으로 둡니다.
-            tau = 1.0 if move_count < 20 else 0.1
-            
-            valid_scores = final_score[valid_moves]
-            
-            # 지수 함수 오버플로우를 막기 위해 최댓값을 빼고 Softmax 계산
-            valid_scores = valid_scores - np.max(valid_scores) 
-            exp_scores = np.exp(valid_scores / tau)
-            action_probs = exp_scores / np.sum(exp_scores)
-            
-            # 온도에 의해 계산된 확률 분포(action_probs)를 바탕으로 행동 무작위(가중치) 선택
-            return np.random.choice(valid_moves, p=action_probs)
-        else:
-            # 실전 평가 모드(과거의 나)일 때는 얄짤없이 무조건 가장 좋은 수만 둡니다.
-            return np.argmax(final_score)
+        
+        return np.argmax(final_score)
     
-    # 내재적 보상 (1:1 공수 완벽 밸런스 평가)
+    # 내재적 보상
     def get_intrinsic_reward(self, state, action):
         board_size = state.shape[0]
         r, c = action // board_size, action % board_size
         
+        # 특정 플레이어(나 또는 상대) 입장에서 해당 위치의 패턴 가치를 계산하는 내부 함수
         def evaluate_for_player(target_player):
             sim_state = state.copy()
-            sim_state[r, c] = target_player 
+            sim_state[r, c] = target_player # 평가하려는 플레이어의 돌을 놓아봄
             
             score = 0.0
             directions = [(0, 1), (1, 0), (1, 1), (-1, 1)]
@@ -545,27 +492,30 @@ class KhyAgent:
                         nr += dr * step
                         nc += dc * step
                 
-                # 최대값이 1.0 근처를 넘지 않도록 비율 압축 (우선순위는 철저히 유지)
+                # 순수 포메이션 가치 평가 (돌이 놓였을 때의 파괴력)
                 if consecutive >= 5:
-                    score += 1.5   # 게임 종료: 다른 어떤 조합보다 무조건 높게 설정 (1순위)
+                    score += 2.0  
                 elif consecutive == 4 and open_ends >= 1:
-                    score += 0.6   # 열린 4목: 즉각적 위협 (2순위)
+                    score += 0.8  
                     pattern_counts['four'] += 1
                 elif consecutive == 3 and open_ends == 2:
-                    score += 0.3   # 열린 3목 (3순위)
+                    score += 0.2  
                     pattern_counts['open_3'] += 1
             
-            # 양수겸장 판단 (5목의 1.5보다는 낮지만, 단일 4목 0.6보다는 높은 0.9 부여)
+            # 양수겸장(3-3, 4-3 등) 평가
             if pattern_counts['four'] >= 2 or (pattern_counts['four'] >= 1 and pattern_counts['open_3'] >= 1) or pattern_counts['open_3'] >= 2:
-                score = max(score, 0.9) # 누적 합산 대신 강제 덮어쓰기로 점수 폭발 방지
+                score += 1.5
                 
             return score
 
+        # 1. 공격 가치: 내가(1) 두었을 때 얻는 포메이션 점수
         attack_value = evaluate_for_player(1) 
+        
+        # 2. 수비 가치: 상대(2)가 두었다면 얻었을 포메이션 점수를 빼앗음
         defense_value = evaluate_for_player(2) 
         
-        # 공격과 수비를 합쳐도 최대 약 3.0을 넘지 않도록 제어됨
-        total_reward = attack_value + defense_value
+        # 공격과 수비의 가치를 1.0 대 1.0으로 동등하게 합산
+        total_reward = (attack_value * 1.1) + defense_value
         
         return total_reward
     
