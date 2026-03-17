@@ -300,7 +300,7 @@ def find_urgent_move_fast(state, valid_moves, player):
     return best_move
 
 @njit
-def fast_rollout_fast(state, action, max_depth, max_moves=800):
+def fast_rollout_fast(state, action, max_depth, max_moves=100):
     """극단적으로 최적화된 초고속 MCTS 시뮬레이션 엔진"""
     board_size = state.shape[0]
     sim_state = state.copy()
@@ -319,15 +319,17 @@ def fast_rollout_fast(state, action, max_depth, max_moves=800):
         return 1.0 
         
     current_player = 2
-    depth_penalty_weight = 0.05 
+    depth_penalty_weight = 0.01
 
     # [최적화 1] 매 턴 np.where를 호출하지 않고, 처음에 한 번만 빈칸 목록을 추출
     valid_moves = np.where(sim_state.flatten() == 0)[0]
     num_valid = len(valid_moves)
 
     for depth in range(max_depth):
-        if current_stones >= max_moves or num_valid == 0:
-            return -0.8 if current_stones >= max_moves else 0.0
+        if current_stones >= max_moves:
+            return -0.8
+        if num_valid == 0:
+            return 0.0
         
         # [최적화 3] O(1) 속도로 빈칸 뽑고 삭제하기 (배열 새로고침 방지)
         idx = np.random.randint(num_valid)
@@ -352,7 +354,7 @@ def fast_rollout_fast(state, action, max_depth, max_moves=800):
             
         current_player = 3 - current_player
         
-    return 0.0
+    return 0.0 # 30수 안쪽에서 승부가 안 나면 일단 무승부(판단 유보) 처리
     
 class KhyAgent:
     def __init__(self, model):
@@ -431,7 +433,7 @@ class KhyAgent:
             sim_action = np.random.choice(valid_moves, p=probs)
             
             # Numba로 최적화된 20수 무작위 롤아웃 실행 (빠른 속도)
-            reward = fast_rollout_fast(state, sim_action, max_depth=20)
+            reward = fast_rollout_fast(state, sim_action, max_depth=30)
             action_visits[sim_action] += 1
             action_wins[sim_action] += reward
         
@@ -540,33 +542,39 @@ class KhyAgent:
     # 기억 장치 (데이터 증강 적용)
     def memorize_episode(self, episode_memory, final_reward):
         discounted_reward = final_reward
-        step_cost = 0.005 # 턴이 길어질수록 깎이는 '시간 지연 페널티' (유지)
-        intrinsic_weight = 0.05 # 내재적 보상의 비중을 5%로 대폭 축소 (파밍 방지)
+        step_cost = 0.005 
+        intrinsic_weight = 0.05 
         
         for state, action, step_reward in reversed(episode_memory):
-            # 최종 승패 보상에 '매우 작게 축소된' 모양 만들기 보상을 더함
+            # 내재적 보상 결합
             total_reward = discounted_reward + (step_reward * intrinsic_weight)
             
+            # [수정] Value 헤드(tanh)의 범위인 -1 ~ 1 사이로 강제 고정 (학습 안정화)
+            total_reward = np.clip(total_reward, -1.0, 1.0)
+            
+            # 2. 데이터 증강 (8방향 대칭)
             board_size = state.shape[0]
             action_matrix = np.zeros((board_size, board_size), dtype=np.int8)
             action_matrix[action // board_size, action % board_size] = 1
             
-            # (8방향 대칭 데이터 생성 코드는 기존과 완벽히 동일하므로 그대로 유지)
             for i in range(4):
-                rot_state = np.rot90(state, k=i)
-                rot_action_mat = np.rot90(action_matrix, k=i)
-                rot_action = np.argmax(rot_action_mat) 
-                self.memory.append((rot_state.copy(), rot_action, total_reward))
+                # 회전
+                rot_s = np.rot90(state, k=i)
+                rot_a = np.argmax(np.rot90(action_matrix, k=i))
+                self.memory.append((rot_s.copy(), rot_a, total_reward))
                 
-                flip_state = np.fliplr(rot_state)
-                flip_action_mat = np.fliplr(rot_action_mat)
-                flip_action = np.argmax(flip_action_mat)
-                self.memory.append((flip_state.copy(), flip_action, total_reward))
+                # 좌우 반전 후 회전
+                flip_s = np.fliplr(rot_s)
+                flip_a = np.argmax(np.fliplr(np.rot90(action_matrix, k=i)))
+                self.memory.append((flip_s.copy(), flip_a, total_reward))
                 
-            # 핵심 논리: 다음 스텝(더 이전 턴)으로 갈수록 시간 감가 적용 및 페널티 부여
-            discounted_reward = discounted_reward * self.gamma - step_cost
+            # 다음(이전 턴) 계산을 위해 보상 업데이트
+            if final_reward > 0: # 이긴 게임: 이전 턴으로 갈수록 가치 감소
+                discounted_reward = discounted_reward * self.gamma - step_cost
+            else: # 진 게임: 이전 턴으로 갈수록 가치 하락 (더 나쁘게 평가)
+                discounted_reward = discounted_reward * self.gamma - step_cost
             
-            # 보상이 -1.0 밑으로 무한히 떨어져서 학습이 붕괴되는 것을 방어
+            # 하한선 방어
             discounted_reward = max(discounted_reward, -1.0)
     
     # ====================
@@ -762,7 +770,7 @@ def train_main():
                     final_reward = 1.0  
                 elif winner == 0: 
                     draws += 1
-                    final_reward = -1.0 
+                    final_reward = -0.2
                 else: 
                     agent1_losses += 1
                     final_reward = -1.0 
