@@ -863,5 +863,5 @@ def train_main():
 # 4. 메인
 # ==========================================
 if __name__ == "__main__":
-    main()
-    # train_main()
+    # main()
+    train_main()
