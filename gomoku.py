@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.utils.tensorboard import SummaryWriter
 import time
 from tqdm import tqdm
 
@@ -479,10 +480,9 @@ class KhyAgent:
         board_size = state.shape[0]
         r, c = action // board_size, action % board_size
         
-        # 특정 플레이어(나 또는 상대) 입장에서 해당 위치의 패턴 가치를 계산하는 내부 함수
         def evaluate_for_player(target_player):
             sim_state = state.copy()
-            sim_state[r, c] = target_player # 평가하려는 플레이어의 돌을 놓아봄
+            sim_state[r, c] = target_player 
             
             score = 0.0
             directions = [(0, 1), (1, 0), (1, 1), (-1, 1)]
@@ -505,30 +505,27 @@ class KhyAgent:
                         nr += dr * step
                         nc += dc * step
                 
-                # 순수 포메이션 가치 평가 (돌이 놓였을 때의 파괴력)
+                # 최대값이 1.0 근처를 넘지 않도록 비율 압축 (우선순위는 철저히 유지)
                 if consecutive >= 5:
-                    score += 2.0  
+                    score += 1.5   # 게임 종료: 다른 어떤 조합보다 무조건 높게 설정 (1순위)
                 elif consecutive == 4 and open_ends >= 1:
-                    score += 1.0  
+                    score += 0.6   # 열린 4목: 즉각적 위협 (2순위)
                     pattern_counts['four'] += 1
                 elif consecutive == 3 and open_ends == 2:
-                    score += 0.4  
+                    score += 0.3   # 열린 3목 (3순위)
                     pattern_counts['open_3'] += 1
             
-            # 양수겸장(3-3, 4-3 등) 평가
+            # 양수겸장 판단 (5목의 1.5보다는 낮지만, 단일 4목 0.6보다는 높은 0.9 부여)
             if pattern_counts['four'] >= 2 or (pattern_counts['four'] >= 1 and pattern_counts['open_3'] >= 1) or pattern_counts['open_3'] >= 2:
-                score += 2.0
+                score = max(score, 0.9) # 누적 합산 대신 강제 덮어쓰기로 점수 폭발 방지
                 
             return score
 
-        # 1. 공격 가치: 내가(1) 두었을 때 얻는 포메이션 점수
         attack_value = evaluate_for_player(1) 
-        
-        # 2. 수비 가치: 상대(2)가 두었다면 얻었을 포메이션 점수를 빼앗음
         defense_value = evaluate_for_player(2) 
         
-        # 공격과 수비의 가치를 1.0 대 1.0으로 동등하게 합산
-        total_reward = (attack_value * 1.1) + defense_value
+        # 공격과 수비를 합쳐도 최대 약 3.0을 넘지 않도록 제어됨
+        total_reward = attack_value + defense_value
         
         return total_reward
     
@@ -567,7 +564,7 @@ class KhyAgent:
     # 복습 엔진
     def replay_experience(self):
         if len(self.memory) < self.batch_size:
-            return
+            return 0.0, 0.0 # 학습을 안 했을 때는 0 반환
         
         minibatch = random.sample(self.memory, self.batch_size)
         states, actions, targets = zip(*minibatch)
@@ -580,11 +577,16 @@ class KhyAgent:
         
         value_loss = F.mse_loss(values, targets_tensor)
         policy_loss = F.cross_entropy(policy_logits, actions_tensor)
+        
+        # [핵심] 두 Loss를 합치되, 스케일에 따라 가중치(예: c=1.0)를 둘 수 있습니다.
         total_loss = value_loss + policy_loss
 
         self.optimizer.zero_grad()
         total_loss.backward()
         self.optimizer.step()
+        
+        # 외부에서 로깅할 수 있도록 순수 Python float 값으로 반환
+        return value_loss.item(), policy_loss.item()
     
     # 유틸
     def train_mode(self):
@@ -656,6 +658,9 @@ def main():
 def train_main():
     env = OmokEnvGUI(render_mode=None)
     
+    # [추가] 텐서보드 Writer 초기화 (실행할 때마다 runs 폴더 내에 기록됨)
+    writer = SummaryWriter("runs/omok_training_v1")
+    
     # 학습할 메인 에이전트
     model1 = DualHeadResOmokCNN()  
     agent1 = KhyAgent(model1)
@@ -673,24 +678,25 @@ def train_main():
     EPISODES = 10000
     UPDATE_INTERVAL = 500 # 통계 리셋 및 상대방 진화 주기
     
+    global_episode = 0 # [추가] 세대와 상관없이 누적되는 전체 에피소드 카운터 (텐서보드 X축)
+    
     for gen in range(1, N + 1):
         print(f"\n{'='*40}\n[Generation {gen}/{N}] 제 {gen}세대\n{'='*40}")
         
-        # 세대 시작 시 탐험률 초기화 및 진행률 표시줄 생성
+        # 세대 시작 시 탐험률 초기화
         agent1.epsilon, agent1.epsilon_decay = 0.0, 1.0
         
-        # 10,000판을 500판 단위로 쪼개어 루프 실행 (총 20개의 구간)
+        # 10,000판을 500판 단위로 쪼개어 루프 실행
         for phase_start in range(1, EPISODES + 1, UPDATE_INTERVAL):
             phase_end = phase_start + UPDATE_INTERVAL - 1
             
-            # 핵심: 200판마다 통계(승리 횟수, 턴 수)를 0으로 초기화하여 '현재 상대'에 대한 진짜 실력만 측정
-            agent1_wins, total_steps = 0, 0
-            
-            # 새로운 200판 단위의 진행바 생성
+            # 통계 초기화
             agent1_wins, draws, agent1_losses, total_steps = 0, 0, 0, 0
             pbar = tqdm(total=UPDATE_INTERVAL, desc=f"[Gen {gen}] {phase_start}~{phase_end}판", position=0, leave=True)
             
             for episode in range(phase_start, phase_end + 1):
+                global_episode += 1 # [추가] 전체 누적 카운트 1 증가
+                
                 state, info = env.reset()
                 terminated = False
                 memory_b, memory_w = [], []
@@ -702,13 +708,12 @@ def train_main():
                 while not terminated:
                     current_player = info["current_player"]
                     
-                    # 50수 제한 강제 패배 로직
+                    # 100수 제한 강제 패배 로직
                     if current_episode_steps >= 100:
                         terminated = True
                         info["winner"] = 0 
                         break 
                     
-                    # 핵심: 현재 플레이어의 시점에 맞게 보드판 정규화 (내 돌은 항상 1, 상대는 2)
                     if current_player == 2:
                         canonical_state = np.where(state != 0, 3 - state, 0)
                     else:
@@ -716,28 +721,22 @@ def train_main():
                         
                     is_opening = current_episode_steps < 2
 
-                    # 현재 턴이 메인 에이전트인지, 과거의 나(상대방)인지 판별
                     is_agent1_turn = (current_player == agent1_color)
                     active_agent = agent1 if is_agent1_turn else agent2_self
                     
-                    # 항상 '내 돌이 1'인 정규화된 보드판(canonical_state)으로 판단
                     if is_opening:
                         valid_moves = np.where(canonical_state.flatten() == 0)[0]
                         action = np.random.choice(valid_moves)
                     else:
                         action = active_agent.select_action(canonical_state, move_count=current_episode_steps)
                         
-                    # 보상 계산 역시 정규화된 보드판 기준 (agent1의 로직 공유)
                     step_reward = agent1.get_intrinsic_reward(canonical_state, action)
                     
-                    # 메모리 저장: CNN이 헷갈리지 않게 무조건 '정규화된 상태'를 저장
-                    # 현재 흑 차례면 memory_b에, 백 차례면 memory_w에 분류
                     if current_player == 1:
                         memory_b.append((canonical_state, action, step_reward))
                     else:
                         memory_w.append((canonical_state, action, step_reward))
 
-                    # 실제 게임 환경은 원래 action대로 진행
                     next_state, reward, terminated, _, info = env.step(action)
                     state = next_state
                     current_episode_steps += 1
@@ -748,39 +747,53 @@ def train_main():
                 winner = info.get("winner")
                 if winner == agent1_color:
                     agent1_wins += 1
-                elif winner == 0: # 무승부
+                    final_reward = 1.0  
+                elif winner == 0: 
                     draws += 1
-                else: # 패배
+                    final_reward = -1.0 
+                else: 
                     agent1_losses += 1
+                    final_reward = -1.0 
 
-                # 데이터 증강 및 양방향 학습 로직
-                if winner == agent1_color:
-                    final_reward = 1.0  # 내가 이김
-                elif winner == 0:
-                    final_reward = -1.0 # 무승부 (난전 강제를 위한 공멸 페널티 적용 시)
-                else:
-                    final_reward = -1.0 # 내가 짐
-
-                # 오직 내가(agent1) 플레이했던 색깔의 기보만 저장
                 if agent1_color == 1:
                     agent1.memorize_episode(memory_b, final_reward)
                 else:
                     agent1.memorize_episode(memory_w, final_reward)
                     
+                # [수정] 복습 시 반환된 Loss를 합산하여 에피소드 평균 Loss 계산
+                ep_v_loss, ep_p_loss = 0.0, 0.0
+                valid_trains = 0
+                
                 for _ in range(8):
-                    agent1.replay_experience()
+                    v_loss, p_loss = agent1.replay_experience()
+                    # 학습이 이루어졌을 때만 누적 (초반 메모리 부족 시 0 반환됨)
+                    if v_loss > 0 or p_loss > 0: 
+                        ep_v_loss += v_loss
+                        ep_p_loss += p_loss
+                        valid_trains += 1
+                
+                # [추가] 텐서보드에 네트워크 Loss 기록 (학습이 1번이라도 진행된 경우)
+                if valid_trains > 0:
+                    ep_v_loss /= valid_trains
+                    ep_p_loss /= valid_trains
+                    writer.add_scalar("1_Loss/Value_Loss", ep_v_loss, global_episode)
+                    writer.add_scalar("1_Loss/Policy_Loss", ep_p_loss, global_episode)
 
-                # --- 통계 계산 (1~10000판 누적이 아닌, 현재 200판 구간 내의 통계) ---
+                # --- 통계 계산 ---
                 current_phase_ep = episode - phase_start + 1
-                decisive_games = agent1_wins + agent1_losses # 승패가 갈린 게임 수
+                decisive_games = agent1_wins + agent1_losses 
                 
                 if decisive_games > 0:
-                    # 무승부를 제외하고, 순수하게 이기거나 진 게임 중 이긴 비율
                     win_rate = (agent1_wins / decisive_games) * 100 
                 else:
                     win_rate = 0.0
                     
                 avg_steps = total_steps // current_phase_ep
+                
+                # [추가] 텐서보드에 훈련 지표 기록
+                writer.add_scalar("2_Metrics/Win_Rate", win_rate, global_episode)
+                writer.add_scalar("2_Metrics/Steps_per_Game", current_episode_steps, global_episode)
+                writer.add_scalar("3_Hyperparameters/Epsilon", agent1.epsilon, global_episode)
 
                 pbar.set_postfix({
                     "승/무/패": f"{agent1_wins}/{draws}/{agent1_losses}",
@@ -794,11 +807,10 @@ def train_main():
                 
                 agent1.decay_epsilon()
 
-            # 500판 구간 종료 시 진행바 닫기
             pbar.close()
             
-            # --- 200판 종료 직후: 상대방 진화 및 탐험률 롤백 ---
-            if phase_end < EPISODES: # 마지막 판이 아닐 때만 업데이트 수행
+            # --- 500판 종료 직후: 상대방 진화 및 탐험률 롤백 ---
+            if phase_end < EPISODES: 
                 if win_rate >= 55.0 and decisive_games >= 100:
                     agent1.save_model(f"khy_omok_ep{phase_end}.pth")
                     agent2_self.model.load_state_dict(agent1.model.state_dict())
@@ -811,10 +823,11 @@ def train_main():
                 agent1.epsilon_decay = 1.0
                 print(f"[업데이트] {phase_end}판 종료: {update_msg} / [입실론 롤백: {agent1.epsilon:.3f}]\n")
 
-        # 10,000판 (1세대) 종료 후 최종 모델 저장
+        # 1세대 종료 후 최종 모델 저장
         agent1.save_model(f"khy_omok_gen{gen}_final.pth")
         
     print(f"\n=== 총 {N}세대({N * EPISODES}판)의 대장정 완료 ===")
+    writer.close() # [추가] 모든 학습 완료 시 텐서보드 Writer 닫기
     env.close()
     
 # ==========================================
