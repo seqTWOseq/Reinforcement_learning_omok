@@ -843,8 +843,8 @@ def train_main():
                 if valid_trains > 0:
                     ep_v_loss /= valid_trains
                     ep_p_loss /= valid_trains
-                    writer.add_scalar("1_Loss/Value_Loss", ep_v_loss, global_episode)
-                    writer.add_scalar("1_Loss/Policy_Loss", ep_p_loss, global_episode)
+                    # writer.add_scalar("1_Loss/Value_Loss", ep_v_loss, global_episode)
+                    # writer.add_scalar("1_Loss/Policy_Loss", ep_p_loss, global_episode)
                     
                     if global_episode % 10 == 0:
                         plotter.update(ep_v_loss, ep_p_loss)
@@ -861,9 +861,9 @@ def train_main():
                 avg_steps = total_steps // current_phase_ep
                 
                 # [추가] 텐서보드에 훈련 지표 기록
-                writer.add_scalar("2_Metrics/Win_Rate", win_rate, global_episode)
-                writer.add_scalar("2_Metrics/Steps_per_Game", current_episode_steps, global_episode)
-                writer.add_scalar("3_Hyperparameters/Epsilon", agent1.epsilon, global_episode)
+                # writer.add_scalar("2_Metrics/Win_Rate", win_rate, global_episode)
+                # writer.add_scalar("2_Metrics/Steps_per_Game", current_episode_steps, global_episode)
+                # writer.add_scalar("3_Hyperparameters/Epsilon", agent1.epsilon, global_episode)
 
                 pbar.set_postfix({
                     "승/무/패": f"{agent1_wins}/{draws}/{agent1_losses}",
