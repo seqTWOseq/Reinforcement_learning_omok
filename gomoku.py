@@ -369,7 +369,7 @@ class KhyAgent:
         self.name = "Khy_AI"
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=0.0005)
 
         self.is_training = True
         
@@ -613,7 +613,7 @@ class KhyAgent:
         policy_loss = F.cross_entropy(policy_logits, actions_tensor)
         
         # [핵심] 두 Loss를 합치되, 스케일에 따라 가중치(예: c=1.0)를 둘 수 있습니다.
-        total_loss = (value_loss * 1*5) + policy_loss
+        total_loss = (value_loss * 1.5) + policy_loss
 
         self.optimizer.zero_grad()
         total_loss.backward()
