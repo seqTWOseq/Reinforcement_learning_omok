@@ -13,6 +13,10 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from khy_model import DualHeadResOmokCNN
+from hjw_model import AlphaZeroNet
+from hjw_model import MCTS
+from hjw_model import GomokuGame
+
 
 # ==========================================
 # 1. 오목 강화학습 환경 (GUI 포함)
@@ -549,18 +553,60 @@ class KhyAgent:
             self.epsilon *= self.epsilon_decay
 
 # ==========================================
+# 홍정우AlphaZeroAgent
+# ==========================================
+BOARD_SIZE = 15
+ACTION_SIZE = BOARD_SIZE * BOARD_SIZE
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+class AlphaZeroAgent:
+    def __init__(self, model_path="alphazero_omok_latest.pth", name="AlphaZero(🤖)"):
+        self.name = name
+        self.game = GomokuGame()
+        
+        # 신경망 뼈대를 만들고, 저장된 가중치(.pth)를 불러와서 덮어씌움
+        self.model = AlphaZeroNet().to(device)
+        try:
+            self.model.load_state_dict(torch.load(model_path, map_location=device))
+            self.model.eval() # 평가 모드
+            print(f"✅ '{model_path}' 알파제로 두뇌 장착 완료! (장치: {device})")
+        except Exception as e:
+            print(f"❌ 가중치 로드 실패: {e}\n임시로 랜덤하게 둡니다.")
+            self.model = None
+
+    def select_action(self, state, player_id):
+        if self.model is None:
+            valid = np.where(state.flatten() == 0)[0]
+            return int(np.random.choice(valid)) if len(valid) > 0 else 0
+
+        # 🌟 핵심 1: GUI 상태를 알파제로가 이해하는 상태(내돌:1, 상대:-1)로 변환
+        canonical_state = np.zeros_like(state, dtype=np.int8)
+        canonical_state[state == player_id] = 1        # 내 돌
+        canonical_state[state == (3 - player_id)] = -1 # 상대 돌
+
+        print("🤔 알파제로가 100번의 수읽기를 진행 중입니다...")
+        
+        # 🌟 핵심 2: MCTS 수읽기를 통해 가장 확실한 수를 찾음
+        mcts = MCTS(self.game, self.model, simulations=100)
+        action_probs = mcts.search(canonical_state)
+        
+        # 확률이 가장 높은 곳 선택
+        best_action = np.argmax(action_probs)
+        return int(best_action)
+
+# ==========================================
 # 3. 대결 실행 루프 (Arena)
 # ==========================================
 def main():
     env = OmokEnvGUI(render_mode="human")
-    agent1 = HumanAgent(env, name="Human_Black(●)")
+    # agent1 = HumanAgent(env, name="Human_Black(●)")
     # 김현용
-    # khy_model = DualHeadResOmokCNN()s
-    # agent1 = KhyAgent(khy_model)
+    khy_model = DualHeadResOmokCNN()
+    agent2 = KhyAgent(khy_model)
     # agent1.load_model("khy_omok_gen2_final.pth")
-    # agent1.eval_mode()
+    agent2.eval_mode()
 
-    agent2 = HumanAgent(env, name="Human")
+    agent1 = AlphaZeroAgent(name="AlphaZero(🤖)")
     
     state, info = env.reset()
     env.render()
@@ -571,14 +617,16 @@ def main():
     while not terminated:
         # 턴에 따른 상태 반전 논리 (상대는 항상 자신이 흑돌인 것처럼 착각하게 만듦)
         if info["current_player"] == 1:
-            action = agent1.select_action(state)
+            # action = agent1.select_action(state)
+            action = agent1.select_action(state, player_id=1)
         else:
             inverted_state = np.where(state == 1, 2, np.where(state == 2, 1, 0))
             action = agent2.select_action(inverted_state)
+            # action = agent2.select_action(state, player_id=2)
             
         state, reward, terminated, _, info = env.step(action)
         env.render()
-        time.sleep(0.1) # 시각적 확인을 위한 지연
+        time.sleep(1) # 시각적 확인을 위한 지연
 
     # 결과 판정
     print("\n=== 🏁 대결 종료 ===")
