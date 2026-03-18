@@ -1,7 +1,7 @@
-"""Athenan evaluation helpers."""
+"""Value-net Athenan evaluation helpers."""
 
-from gomoku_ai.athenan.eval.dummy_agent import AthenanDummyAgent
-from gomoku_ai.athenan.eval.evaluator import (
+from gomoku_ai.athenan.eval.valuenet_athenan_dummy_agent import AthenanDummyAgent
+from gomoku_ai.athenan.eval.valuenet_athenan_evaluator import (
     AlphaZeroAgentAdapter,
     AthenanEvaluator,
     BestCheckpointDecision,
@@ -10,7 +10,7 @@ from gomoku_ai.athenan.eval.evaluator import (
     SearcherAgent,
     TrainInferenceComparison,
 )
-from gomoku_ai.athenan.eval.play import AgentPlayResult, play_agent_game
+from gomoku_ai.athenan.eval.valuenet_athenan_play import AgentPlayResult, play_agent_game
 
 __all__ = [
     "AgentPlayResult",

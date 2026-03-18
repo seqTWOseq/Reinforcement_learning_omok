@@ -12,7 +12,7 @@ import torch
 
 from gomoku_ai.athenan.network import AthenanValueNet, load_athenan_value_net, save_athenan_value_net
 from gomoku_ai.athenan.replay import AthenanReplayBuffer, AthenanReplaySample
-from gomoku_ai.athenan.trainer.losses import build_value_training_loss
+from gomoku_ai.athenan.trainer.valuenet_athenan_losses import build_value_training_loss
 from gomoku_ai.athenan.utils import ATHENAN_FEATURE_PLANES, set_seed
 
 

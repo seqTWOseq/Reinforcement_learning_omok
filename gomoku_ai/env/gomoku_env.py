@@ -111,9 +111,35 @@ class GomokuEnv:
         return row * self.board_size + col
 
     def get_valid_moves(self) -> np.ndarray:
-        """Return a flat boolean mask indicating which moves are currently legal."""
+        """Return a flat boolean mask indicating which moves are currently legal.
 
+        This mask is intended for policy networks, MCTS, and any code that
+        prefers fixed-size action masking.
+
+        Terminal-state policy:
+        - when `done` is `True`, the returned mask is all `False`
+        - otherwise, empty cells are `True` and occupied cells are `False`
+        """
+
+        if self.done:
+            return np.zeros(self.board_size * self.board_size, dtype=bool)
         return (self.board.reshape(-1) == EMPTY).astype(bool, copy=False)
+
+    def is_legal_action(self, action: int) -> bool:
+        """Return `True` when `action` is in range and playable now."""
+
+        if self.done or not isinstance(action, (int, np.integer)):
+            return False
+        try:
+            row, col = self.action_to_coord(int(action))
+        except ValueError:
+            return False
+        return bool(self.board[row, col] == EMPTY)
+
+    def get_legal_actions(self) -> list[int]:
+        """Return a dense list of currently legal flat action indices."""
+
+        return np.flatnonzero(self.get_valid_moves()).astype(int, copy=False).tolist()
 
     def apply_move(self, action: int) -> dict[str, Any]:
         """Apply a move for the current player and return the resulting metadata.
@@ -121,6 +147,11 @@ class GomokuEnv:
         Normal callers should use this method instead of mutating `board`
         directly so that `last_move`, `winner`, `done`, and `move_count` stay
         consistent.
+
+        Terminal-state note:
+            On a winning or drawing move, `current_player` remains the player
+            who just moved. `MoveResult.next_player` is therefore `None` for
+            terminal states.
 
         Raises:
             RuntimeError: If a move is attempted after the game has ended.

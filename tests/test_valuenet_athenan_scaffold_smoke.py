@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
+import math
 
 from gomoku_ai.alphazero import HumanPlayConfig, HumanVsAlphaZeroGameRunner
 from gomoku_ai.athenan import AthenanDummyAgent
@@ -52,5 +52,5 @@ def test_human_play_runner_accepts_shared_agent_interface() -> None:
     assert len(record.samples) == 4
     assert all(sample.player_to_move == WHITE for sample in record.samples)
     for sample in record.samples:
-        assert sample.policy_target[sample.action_taken] == pytest.approx(1.0)
-        assert float(sample.policy_target.sum()) == pytest.approx(1.0)
+        assert math.isclose(float(sample.policy_target[sample.action_taken]), 1.0, rel_tol=0.0, abs_tol=1e-9)
+        assert math.isclose(float(sample.policy_target.sum()), 1.0, rel_tol=0.0, abs_tol=1e-9)

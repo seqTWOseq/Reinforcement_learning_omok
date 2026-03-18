@@ -9,7 +9,7 @@ import torch
 
 from gomoku_ai.athenan.eval import AthenanEvaluator, RandomLegalAgent
 from gomoku_ai.athenan.network import AthenanValueNet
-from gomoku_ai.athenan.play import play_human_vs_athenan_game
+from gomoku_ai.athenan.play import play_human_vs_valuenet_athenan_game
 from gomoku_ai.athenan.search import AthenanInferenceSearcher, AthenanSearcher
 from gomoku_ai.common.agents import SearchResult
 from gomoku_ai.env import BLACK, GomokuEnv, WHITE
@@ -216,7 +216,7 @@ def test_human_play_entrypoint_function_smoke_with_debug() -> None:
         legal_actions = np.flatnonzero(np.asarray(env.get_valid_moves(), dtype=bool))
         return int(legal_actions[0])
 
-    result = play_human_vs_athenan_game(
+    result = play_human_vs_valuenet_athenan_game(
         searcher=searcher,
         human_color=BLACK,
         env_factory=lambda: GomokuEnv(board_size=5),

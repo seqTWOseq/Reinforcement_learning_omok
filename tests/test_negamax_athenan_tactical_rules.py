@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gomoku_ai.athenan.search import (
+from gomoku_ai.negamax_athenan.search import (
     apply_forced_tactical_rule,
     find_immediate_blocking_actions,
     find_immediate_winning_actions,

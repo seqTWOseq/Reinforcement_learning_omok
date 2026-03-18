@@ -122,6 +122,22 @@ def test_invalid_move_raises() -> None:
         raise AssertionError("Expected ValueError for an out-of-range action.")
 
 
+def test_legal_action_helpers_follow_board_state() -> None:
+    """Legal-action helpers should agree with board occupancy on non-terminal states."""
+
+    env = GomokuEnv()
+    env.reset()
+    opening_action = env.coord_to_action(7, 7)
+
+    assert env.is_legal_action(opening_action) is True
+    assert opening_action in env.get_legal_actions()
+
+    env.apply_move(opening_action)
+
+    assert env.is_legal_action(opening_action) is False
+    assert opening_action not in env.get_legal_actions()
+
+
 def test_horizontal_win() -> None:
     """Five consecutive stones in a row should end the game with a black win."""
 
@@ -173,6 +189,51 @@ def test_diagonal_win_down_right() -> None:
 
     assert env.done is True
     assert env.winner == BLACK
+
+
+def test_terminal_states_have_no_legal_actions() -> None:
+    """Terminal positions should expose zero legal moves across all helper APIs."""
+
+    env = GomokuEnv()
+    _place_stones(
+        env,
+        black_coords=[(7, 3), (7, 4), (7, 5), (7, 6)],
+        white_coords=[(6, 0), (6, 1), (6, 2), (6, 3)],
+        current_player=BLACK,
+    )
+
+    winning_action = env.coord_to_action(7, 7)
+    env.apply_move(winning_action)
+
+    valid_moves = env.get_valid_moves()
+
+    assert env.done is True
+    assert valid_moves.shape == (BOARD_SIZE * BOARD_SIZE,)
+    assert valid_moves.dtype == bool
+    assert not np.any(valid_moves)
+    assert env.get_legal_actions() == []
+    assert env.is_legal_action(env.coord_to_action(0, 0)) is False
+
+
+def test_apply_move_after_terminal_raises_runtime_error() -> None:
+    """Further moves should be rejected once the game is over."""
+
+    env = GomokuEnv()
+    _place_stones(
+        env,
+        black_coords=[(7, 3), (7, 4), (7, 5), (7, 6)],
+        white_coords=[(6, 0), (6, 1), (6, 2), (6, 3)],
+        current_player=BLACK,
+    )
+
+    env.apply_move(env.coord_to_action(7, 7))
+
+    try:
+        env.apply_move(env.coord_to_action(0, 0))
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("Expected RuntimeError after a terminal move.")
 
 
 def test_diagonal_win_down_left() -> None:

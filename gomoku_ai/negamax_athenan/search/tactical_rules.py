@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from gomoku_ai.athenan.search.move_ordering import order_actions
+from gomoku_ai.negamax_athenan.search.move_generator import generate_candidate_actions
+from gomoku_ai.negamax_athenan.search.move_ordering import order_actions
 from gomoku_ai.common.agents import SearchResult
-from gomoku_ai.env import BLACK, EMPTY, GomokuEnv, WHITE
+from gomoku_ai.env import BLACK, GomokuEnv, WHITE
 
 
 def find_immediate_winning_actions(
@@ -58,44 +59,11 @@ def generate_proximity_candidates(
 ) -> list[int]:
     """Generate legal candidates within `radius` of existing stones."""
 
-    if radius < 0:
-        raise ValueError("radius must be non-negative.")
-    if candidate_limit is not None and candidate_limit <= 0:
-        raise ValueError("candidate_limit must be positive when provided.")
-
-    legal_moves = np.asarray(env.get_valid_moves(), dtype=bool)
-    legal_actions = np.flatnonzero(legal_moves).astype(int, copy=False)
-    if legal_actions.size == 0:
-        return []
-
-    occupied_coords = np.argwhere(env.board != EMPTY)
-    if occupied_coords.size == 0:
-        center_action = env.coord_to_action(env.board_size // 2, env.board_size // 2)
-        base_actions = [center_action] if legal_moves[center_action] else [int(legal_actions[0])]
-        return base_actions[:candidate_limit] if candidate_limit is not None else base_actions
-
-    candidate_set: set[int] = set()
-    for row, col in occupied_coords:
-        for delta_row in range(-radius, radius + 1):
-            for delta_col in range(-radius, radius + 1):
-                next_row = int(row + delta_row)
-                next_col = int(col + delta_col)
-                if not (0 <= next_row < env.board_size and 0 <= next_col < env.board_size):
-                    continue
-                action = env.coord_to_action(next_row, next_col)
-                if legal_moves[action]:
-                    candidate_set.add(action)
-
-    if not candidate_set:
-        ordered_all = order_actions(env, legal_actions.tolist(), candidate_limit=candidate_limit)
-        return ordered_all
-
-    ordered_candidates = order_actions(
+    return generate_candidate_actions(
         env,
-        sorted(candidate_set),
-        candidate_limit=candidate_limit,
+        radius=radius,
+        max_candidates=candidate_limit,
     )
-    return ordered_candidates
 
 
 def apply_forced_tactical_rule(
@@ -167,12 +135,6 @@ def _blocking_actions_from_opponent_immediate_wins(opponent_wins: list[int]) -> 
 def _is_immediate_win_for_player(env: GomokuEnv, action: int, player: int) -> bool:
     """Return `True` when `player` wins by playing `action` now."""
 
-    cloned = env.clone()
-    cloned.current_player = int(player)
-    cloned.done = False
-    cloned.winner = None
-    try:
-        cloned.apply_move(action)
-    except ValueError:
-        return False
-    return bool(cloned.done and cloned.winner == player)
+    from gomoku_ai.negamax_athenan.eval.evaluator import GreedyHeuristicEvaluator
+
+    return GreedyHeuristicEvaluator().would_action_win_for_player(env, action, int(player))

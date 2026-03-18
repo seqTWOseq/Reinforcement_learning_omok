@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 
 from gomoku_ai.athenan.network import AthenanValueNet
-from gomoku_ai.athenan.search.searcher import AthenanSearcher
+from gomoku_ai.athenan.search.valuenet_athenan_searcher import AthenanSearcher
 from gomoku_ai.common.agents import SearchResult
 from gomoku_ai.env import BLACK, GomokuEnv, WHITE
 

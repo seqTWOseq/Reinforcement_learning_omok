@@ -1,6 +1,6 @@
 """Athenan network scaffolding."""
 
-from gomoku_ai.athenan.network.value_net import (
+from gomoku_ai.athenan.network.valuenet_athenan_value_net import (
     ATHENAN_VALUE_NET_CHECKPOINT_FORMAT_VERSION,
     ATHENAN_VALUE_NET_MODEL_TYPE,
     AthenanValueNet,

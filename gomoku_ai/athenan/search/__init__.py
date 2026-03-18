@@ -1,22 +1,9 @@
-"""Athenan search scaffolding."""
+"""Value-net Athenan search entrypoints."""
 
-from gomoku_ai.athenan.search.minimax import AthenanInferenceSearcher
-from gomoku_ai.athenan.search.move_ordering import order_actions, score_action
-from gomoku_ai.athenan.search.searcher import AthenanSearcher
-from gomoku_ai.athenan.search.tactical_rules import (
-    apply_forced_tactical_rule,
-    find_immediate_blocking_actions,
-    find_immediate_winning_actions,
-    generate_proximity_candidates,
-)
+from gomoku_ai.athenan.search.valuenet_athenan_inference_searcher import AthenanInferenceSearcher
+from gomoku_ai.athenan.search.valuenet_athenan_searcher import AthenanSearcher
 
 __all__ = [
     "AthenanInferenceSearcher",
     "AthenanSearcher",
-    "apply_forced_tactical_rule",
-    "find_immediate_blocking_actions",
-    "find_immediate_winning_actions",
-    "generate_proximity_candidates",
-    "order_actions",
-    "score_action",
 ]

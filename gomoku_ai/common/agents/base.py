@@ -15,6 +15,8 @@ class SearchResult:
     Notes:
     - `best_action` can be `-1` when the root position is terminal.
     - `nodes` counts visited search nodes, including the root node.
+    - `cutoffs` / `pruned_branches` are optional pruning stats and default to 0.
+    - `tt_hits` / `tt_stores` are optional TT stats and default to 0.
     """
 
     best_action: int
@@ -24,6 +26,10 @@ class SearchResult:
     nodes: int
     depth_reached: int
     forced_tactical: bool = False
+    cutoffs: int = 0
+    pruned_branches: int = 0
+    tt_hits: int = 0
+    tt_stores: int = 0
 
 
 class BaseSearcher(ABC):

@@ -73,77 +73,111 @@ class OmokEnvGUI:
     """Small Tkinter Gomoku board used for human-vs-AI play."""
 
     def __init__(self, render_mode: str = "human") -> None:
-        self.board_size = BOARD_SIZE
+        self._env = GomokuEnv(board_size=BOARD_SIZE)
+        self.board_size = self._env.board_size
         self.render_mode = render_mode
-        self.board = np.zeros((self.board_size, self.board_size), dtype=np.int8)
-        self.current_player = BLACK
-        self.last_move: tuple[int, int] | None = None
-        self.winner: int | None = None
-        self.done = False
-        self.move_count = 0
 
         self.window: tk.Tk | None = None
         self.canvas: tk.Canvas | None = None
         self.cell_size = 40
         self.margin = 30
 
+    @property
+    def board(self) -> np.ndarray:
+        return self._env.board
+
+    @board.setter
+    def board(self, value: np.ndarray) -> None:
+        self._env.board = value
+
+    @property
+    def current_player(self) -> int:
+        return self._env.current_player
+
+    @current_player.setter
+    def current_player(self, value: int) -> None:
+        self._env.current_player = value
+
+    @property
+    def last_move(self) -> tuple[int, int] | None:
+        return self._env.last_move
+
+    @last_move.setter
+    def last_move(self, value: tuple[int, int] | None) -> None:
+        self._env.last_move = value
+
+    @property
+    def winner(self) -> int | None:
+        return self._env.winner
+
+    @winner.setter
+    def winner(self, value: int | None) -> None:
+        self._env.winner = value
+
+    @property
+    def done(self) -> bool:
+        return self._env.done
+
+    @done.setter
+    def done(self, value: bool) -> None:
+        self._env.done = value
+
+    @property
+    def move_count(self) -> int:
+        return self._env.move_count
+
+    @move_count.setter
+    def move_count(self, value: int) -> None:
+        self._env.move_count = value
+
+    def action_to_coord(self, action: int) -> tuple[int, int]:
+        """Delegate flat-action to `(row, col)` conversion to the rule engine."""
+
+        return self._env.action_to_coord(action)
+
+    def coord_to_action(self, row: int, col: int) -> int:
+        """Delegate `(row, col)` to flat-action conversion to the rule engine."""
+
+        return self._env.coord_to_action(row, col)
+
     def reset(self) -> tuple[np.ndarray, dict[str, int]]:
         """Reset the board to the initial state."""
 
-        self.board.fill(EMPTY)
-        self.current_player = BLACK
-        self.last_move = None
-        self.winner = None
-        self.done = False
-        self.move_count = 0
+        self._env.reset()
         return self.board.copy(), {"current_player": self.current_player}
 
-    def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict[str, int | str | None]]:
-        """Apply one move on the GUI board."""
+    def step(
+        self,
+        action: int,
+    ) -> tuple[np.ndarray, float, bool, bool, dict[str, int | str | bool | tuple[int, int] | None]]:
+        """Apply one move through `GomokuEnv` and adapt the result for the GUI loop."""
 
-        if self.done:
-            raise RuntimeError("Cannot apply a move after the game has ended.")
-
-        row, col = divmod(action, self.board_size)
-        if not 0 <= row < self.board_size or not 0 <= col < self.board_size:
-            raise ValueError(f"Action {action} is out of range.")
-        if self.board[row, col] != EMPTY:
-            return self.board.copy(), -10.0, True, False, {"reason": "invalid_move", "winner": 3 - self.current_player}
-
-        player = self.current_player
-        self.board[row, col] = player
-        self.last_move = (row, col)
-        self.move_count += 1
-
-        if self._check_win(row, col, player):
-            self.done = True
-            self.winner = player
-            return self.board.copy(), 1.0, True, False, {"reason": "win", "winner": player}
-
-        if not np.any(self.board == EMPTY):
-            self.done = True
-            self.winner = DRAW
-            return self.board.copy(), 0.0, True, False, {"reason": "draw", "winner": DRAW}
-
-        self.current_player = WHITE if self.current_player == BLACK else BLACK
-        return self.board.copy(), 0.0, False, False, {"current_player": self.current_player}
+        result = self._env.apply_move(action)
+        reward = 1.0 if result["reason"] == "win" else 0.0
+        info: dict[str, int | str | bool | tuple[int, int] | None] = dict(result)
+        if result["next_player"] is not None:
+            info["current_player"] = result["next_player"]
+        return self.board.copy(), reward, bool(result["done"]), False, info
 
     def get_valid_moves(self) -> np.ndarray:
-        """Return a flat boolean mask of legal moves."""
+        """Return the engine-provided flat boolean mask of legal moves."""
 
-        return (self.board.reshape(-1) == EMPTY).astype(bool, copy=False)
+        return self._env.get_valid_moves()
+
+    def is_legal_action(self, action: int) -> bool:
+        """Return `True` when `action` is legal in the current engine state."""
+
+        return self._env.is_legal_action(action)
+
+    def get_legal_actions(self) -> list[int]:
+        """Return a list of legal flat actions from the current engine state."""
+
+        return self._env.get_legal_actions()
 
     def to_alphazero_env(self) -> GomokuEnv:
         """Build a `GomokuEnv` snapshot that matches the GUI state."""
 
-        env = GomokuEnv()
-        env.board = self.board.copy()
-        env.current_player = self.current_player
-        env.last_move = self.last_move
-        env.winner = self.winner
-        env.done = self.done
-        env.move_count = self.move_count
-        return env
+        return self._env.clone()
 
     def render(self) -> None:
         """Draw or refresh the Tkinter board."""
@@ -215,27 +249,6 @@ class OmokEnvGUI:
             self.window = None
             self.canvas = None
 
-    def _check_win(self, row: int, col: int, player: int) -> bool:
-        """Return `True` if the last move created five in a row."""
-
-        directions = ((0, 1), (1, 0), (1, 1), (-1, 1))
-        for delta_row, delta_col in directions:
-            count = 1
-            for step in (1, -1):
-                next_row = row + delta_row * step
-                next_col = col + delta_col * step
-                while (
-                    0 <= next_row < self.board_size
-                    and 0 <= next_col < self.board_size
-                    and self.board[next_row, next_col] == player
-                ):
-                    count += 1
-                    next_row += delta_row * step
-                    next_col += delta_col * step
-            if count >= 5:
-                return True
-        return False
-
 
 class HumanAgent:
     """Mouse-driven human player for the Tkinter board."""
@@ -270,8 +283,8 @@ class HumanAgent:
         if not 0 <= row < self.env.board_size or not 0 <= col < self.env.board_size:
             return
 
-        action = row * self.env.board_size + col
-        if self.env.get_valid_moves()[action]:
+        action = self.env.coord_to_action(row, col)
+        if self.env.is_legal_action(action):
             self.clicked_action = action
 
 

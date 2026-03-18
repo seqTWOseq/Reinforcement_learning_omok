@@ -343,7 +343,7 @@ class HumanVsAlphaZeroGameRunner:
 
         action = int(ai_agent.select_action(env))
         env.action_to_coord(action)
-        if not env.get_valid_moves()[action]:
+        if not env.is_legal_action(action):
             raise ValueError(f"External AI selected an illegal action: {action}.")
 
         policy_target = np.zeros(POLICY_SHAPE, dtype=np.float32)
@@ -407,6 +407,6 @@ class HumanVsAlphaZeroGameRunner:
             raise ValueError("Human move must be an int action or a 'row,col' string.")
 
         env.action_to_coord(action)
-        if not env.get_valid_moves()[action]:
+        if not env.is_legal_action(action):
             raise ValueError(f"Action {action} is not legal in the current position.")
         return action

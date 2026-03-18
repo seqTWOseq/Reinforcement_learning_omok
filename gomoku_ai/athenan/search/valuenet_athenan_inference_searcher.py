@@ -1,16 +1,17 @@
-"""Value-guided depth-limited negamax search for Athenan."""
+"""Inference-oriented value-net searcher for Athenan."""
 
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 
 import torch
 from torch import nn
 
 from gomoku_ai.athenan.network import AthenanValueNet
-from gomoku_ai.athenan.search.move_ordering import order_actions
-from gomoku_ai.athenan.search.tactical_rules import (
+from gomoku_ai.negamax_athenan.search.move_ordering import order_actions
+from gomoku_ai.negamax_athenan.search.tactical_rules import (
     find_immediate_blocking_actions,
     find_immediate_winning_actions,
     generate_proximity_candidates,
@@ -22,32 +23,27 @@ from gomoku_ai.env import BLACK, DRAW, GomokuEnv, WHITE
 
 @dataclass(frozen=True)
 class _NodeResult:
-    """Internal negamax return payload."""
+    """Internal negamax node payload."""
 
     value: float
     pv: list[int]
-    nodes: int  # visited search nodes including the current node
+    nodes: int
     depth_reached: int
 
 
-class AthenanSearcher(BaseSearcher):
-    """Depth-limited negamax searcher with optional alpha-beta pruning.
-
-    Value sign convention:
-    - each node value is from that node's current-player perspective
-    - parent receives `-child_value` (negamax symmetry)
-    - root `action_values` are always in root-player perspective
-    - `nodes` counts visited negamax nodes, including root and leaf nodes
-    """
+class AthenanInferenceSearcher(BaseSearcher):
+    """Inference-oriented stronger negamax searcher."""
 
     def __init__(
         self,
         *,
         model: AthenanValueNet | nn.Module | None = None,
-        max_depth: int = 2,
-        candidate_limit: int | None = 32,
+        max_depth: int = 4,
+        candidate_limit: int | None = 64,
         candidate_radius: int = 2,
         use_alpha_beta: bool = True,
+        iterative_deepening: bool = True,
+        time_budget_sec: float | None = None,
         device: str | None = None,
     ) -> None:
         if max_depth <= 0:
@@ -56,24 +52,24 @@ class AthenanSearcher(BaseSearcher):
             raise ValueError("candidate_limit must be positive when provided.")
         if candidate_radius < 0:
             raise ValueError("candidate_radius must be non-negative.")
+        if time_budget_sec is not None and time_budget_sec < 0.0:
+            raise ValueError("time_budget_sec must be non-negative when provided.")
         if not isinstance(use_alpha_beta, bool):
-            raise ValueError("use_alpha_beta must be a bool.")
+            raise ValueError("use_alpha_beta must be bool.")
+        if not isinstance(iterative_deepening, bool):
+            raise ValueError("iterative_deepening must be bool.")
 
         self.model = model
-        self.max_depth = max_depth
+        self.max_depth = int(max_depth)
         self.candidate_limit = candidate_limit
-        self.candidate_radius = candidate_radius
+        self.candidate_radius = int(candidate_radius)
         self.use_alpha_beta = use_alpha_beta
+        self.iterative_deepening = iterative_deepening
+        self.time_budget_sec = time_budget_sec
         self.device = device
 
     def search(self, env: GomokuEnv) -> SearchResult:
-        """Search one move and return root-level action values + PV.
-
-        Terminal-root behavior:
-        - `best_action = -1` sentinel (no legal move to play)
-        - empty `action_values` and empty `principal_variation`
-        - `nodes = 1` because only root terminal check is visited
-        """
+        """Run stronger search and return best move info under `SearchResult`."""
 
         model_was_training: bool | None = None
         if self.model is not None:
@@ -124,62 +120,121 @@ class AthenanSearcher(BaseSearcher):
                 root_actions = self._ordered_candidates(env)
                 forced_tactical = False
 
-            root_player = int(env.current_player)
             if not root_actions:
-                raise RuntimeError("No legal candidates were generated for root search.")
+                raise RuntimeError("No legal candidates were generated for inference search.")
 
-            alpha = -math.inf
-            beta = math.inf
-            nodes = 1
-            depth_reached = 0
-            best_action = root_actions[0]
-            best_value = -math.inf
-            best_child_pv: list[int] = []
-            action_values: dict[int, float] = {}
+            search_start_time = time.perf_counter()
+            depth_schedule = (
+                list(range(1, self.max_depth + 1))
+                if self.iterative_deepening
+                else [self.max_depth]
+            )
 
-            for action in root_actions:
-                child_env = env.clone()
-                child_env.apply_move(action)
-                opponent = self._opponent_of(root_player)
-                child_result = self._negamax(
-                    child_env,
-                    depth_remaining=self.max_depth - 1,
-                    alpha=-beta,
-                    beta=-alpha,
-                    perspective_player=opponent,
-                    ply=1,
+            best_complete_result: SearchResult | None = None
+            for depth in depth_schedule:
+                if self._is_time_budget_exceeded(search_start_time) and best_complete_result is not None:
+                    break
+                depth_result = self._search_root_at_depth(
+                    env,
+                    root_actions=root_actions,
+                    depth=depth,
+                    search_start_time=search_start_time,
+                    forced_tactical=forced_tactical,
                 )
-                value_from_root = -child_result.value
-                action_values[action] = value_from_root
+                if depth_result is None:
+                    break
+                best_complete_result = depth_result
+                if abs(depth_result.root_value) >= 1.0 - 1e-8:
+                    break
 
-                nodes += child_result.nodes
-                depth_reached = max(depth_reached, child_result.depth_reached)
+            if best_complete_result is not None:
+                return best_complete_result
 
-                if value_from_root > best_value:
-                    best_value = value_from_root
-                    best_action = action
-                    best_child_pv = child_result.pv
-
-                if self.use_alpha_beta:
-                    alpha = max(alpha, value_from_root)
-                    if alpha >= beta:
-                        break
-
-            if best_value == -math.inf:
-                best_value = 0.0
-            principal_variation = [best_action] + best_child_pv
+            fallback_action = root_actions[0]
+            fallback_value = self._evaluate_leaf(env, perspective_player=env.current_player)
             return SearchResult(
-                best_action=best_action,
-                root_value=float(best_value),
-                action_values=action_values,
-                principal_variation=principal_variation if principal_variation else [best_action],
-                nodes=nodes,
-                depth_reached=max(1, depth_reached),
+                best_action=fallback_action,
+                root_value=float(fallback_value),
+                action_values={fallback_action: float(fallback_value)},
+                principal_variation=[fallback_action],
+                nodes=1,
+                depth_reached=1,
                 forced_tactical=forced_tactical,
             )
         finally:
             if self.model is not None and model_was_training:
                 self.model.train()
+
+    def _search_root_at_depth(
+        self,
+        env: GomokuEnv,
+        *,
+        root_actions: list[int],
+        depth: int,
+        search_start_time: float,
+        forced_tactical: bool,
+    ) -> SearchResult | None:
+        """Run one full root negamax pass at the requested depth."""
+
+        root_player = int(env.current_player)
+        opponent = self._opponent_of(root_player)
+        alpha = -math.inf
+        beta = math.inf
+        nodes = 1
+        depth_reached = 0
+        best_action = root_actions[0]
+        best_value = -math.inf
+        best_child_pv: list[int] = []
+        action_values: dict[int, float] = {}
+
+        for action in root_actions:
+            if self._is_time_budget_exceeded(search_start_time):
+                break
+
+            child_env = env.clone()
+            child_env.apply_move(action)
+            child_result = self._negamax(
+                child_env,
+                depth_remaining=depth - 1,
+                alpha=-beta,
+                beta=-alpha,
+                perspective_player=opponent,
+                ply=1,
+                search_start_time=search_start_time,
+            )
+            if child_result is None:
+                break
+
+            value_from_root = -child_result.value
+            action_values[action] = float(value_from_root)
+            nodes += child_result.nodes
+            depth_reached = max(depth_reached, child_result.depth_reached)
+
+            if value_from_root > best_value:
+                best_value = value_from_root
+                best_action = action
+                best_child_pv = child_result.pv
+
+            if self.use_alpha_beta:
+                alpha = max(alpha, value_from_root)
+                if alpha >= beta:
+                    break
+
+        if not action_values:
+            return None
+        if best_value == -math.inf:
+            best_value = 0.0
+
+        principal_variation = [best_action] + best_child_pv
+        return SearchResult(
+            best_action=best_action,
+            root_value=float(best_value),
+            action_values=action_values,
+            principal_variation=principal_variation if principal_variation else [best_action],
+            nodes=nodes,
+            depth_reached=max(1, min(depth, depth_reached)),
+            forced_tactical=forced_tactical,
+        )
 
     def _negamax(
         self,
@@ -190,8 +245,12 @@ class AthenanSearcher(BaseSearcher):
         beta: float,
         perspective_player: int,
         ply: int,
-    ) -> _NodeResult:
-        """Depth-limited negamax with optional alpha-beta pruning."""
+        search_start_time: float,
+    ) -> _NodeResult | None:
+        """Depth-limited negamax with optional alpha-beta and time cut."""
+
+        if self._is_time_budget_exceeded(search_start_time):
+            return None
 
         terminal_value = self._evaluate_terminal(env, perspective_player=perspective_player)
         if terminal_value is not None:
@@ -218,9 +277,12 @@ class AthenanSearcher(BaseSearcher):
         best_pv: list[int] = []
         nodes = 1
         depth_reached = ply
-
         local_alpha = alpha
+
         for action in actions:
+            if self._is_time_budget_exceeded(search_start_time):
+                break
+
             child_env = env.clone()
             child_env.apply_move(action)
             child_result = self._negamax(
@@ -230,9 +292,12 @@ class AthenanSearcher(BaseSearcher):
                 beta=-local_alpha,
                 perspective_player=self._opponent_of(perspective_player),
                 ply=ply + 1,
+                search_start_time=search_start_time,
             )
-            value = -child_result.value
+            if child_result is None:
+                break
 
+            value = -child_result.value
             nodes += child_result.nodes
             depth_reached = max(depth_reached, child_result.depth_reached)
 
@@ -246,7 +311,7 @@ class AthenanSearcher(BaseSearcher):
                     break
 
         if best_value == -math.inf:
-            best_value = self._evaluate_leaf(env, perspective_player=perspective_player)
+            return None
 
         return _NodeResult(
             value=float(best_value),
@@ -256,23 +321,14 @@ class AthenanSearcher(BaseSearcher):
         )
 
     def _ordered_candidates(self, env: GomokuEnv) -> list[int]:
-        """Generate and order candidates using tactical neighborhood heuristic."""
-
         candidates = generate_proximity_candidates(
             env,
             radius=self.candidate_radius,
             candidate_limit=None,
         )
-        ordered_actions = order_actions(
-            env,
-            candidates,
-            candidate_limit=self.candidate_limit,
-        )
-        return ordered_actions
+        return order_actions(env, candidates, candidate_limit=self.candidate_limit)
 
     def _evaluate_terminal(self, env: GomokuEnv, *, perspective_player: int) -> float | None:
-        """Return terminal value in `perspective_player` view, otherwise `None`."""
-
         if not env.done:
             return None
         if env.winner == DRAW:
@@ -282,17 +338,9 @@ class AthenanSearcher(BaseSearcher):
         return 1.0 if env.winner == perspective_player else -1.0
 
     def _evaluate_leaf(self, env: GomokuEnv, *, perspective_player: int) -> float:
-        """Evaluate non-terminal leaf from `perspective_player` perspective.
-
-        Fallback mode:
-        - when `self.model is None`, return `0.0` (neutral value)
-        - when model exists, always use network inference
-        """
-
         terminal_value = self._evaluate_terminal(env, perspective_player=perspective_player)
         if terminal_value is not None:
             return terminal_value
-
         if self.model is None:
             return 0.0
 
@@ -303,9 +351,12 @@ class AthenanSearcher(BaseSearcher):
             value = -value
         return value
 
-    def _resolve_model_device(self) -> str | torch.device:
-        """Resolve inference device once per leaf without moving model repeatedly."""
+    def _is_time_budget_exceeded(self, search_start_time: float) -> bool:
+        if self.time_budget_sec is None:
+            return False
+        return (time.perf_counter() - search_start_time) >= self.time_budget_sec
 
+    def _resolve_model_device(self) -> str | torch.device:
         if self.device is not None:
             return self.device
         if self.model is None:

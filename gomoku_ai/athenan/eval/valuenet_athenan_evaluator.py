@@ -1,4 +1,4 @@
-"""Match-based evaluator for Athenan value-search agents."""
+"""Match-based evaluator for the value-net Athenan stack."""
 
 from __future__ import annotations
 
@@ -8,9 +8,10 @@ from typing import Callable, Mapping
 
 import numpy as np
 
-from gomoku_ai.athenan.eval.play import play_agent_game
+from gomoku_ai.athenan.eval.valuenet_athenan_play import play_agent_game
 from gomoku_ai.athenan.network import AthenanValueNet, save_athenan_value_net
-from gomoku_ai.athenan.search import AthenanInferenceSearcher, AthenanSearcher
+from gomoku_ai.athenan.search.valuenet_athenan_inference_searcher import AthenanInferenceSearcher
+from gomoku_ai.athenan.search.valuenet_athenan_searcher import AthenanSearcher
 from gomoku_ai.common.agents import BaseAgent, BaseSearcher
 from gomoku_ai.env import BLACK, DRAW, GomokuEnv, WHITE
 
@@ -46,11 +47,7 @@ class SearcherAgent(BaseAgent):
 
 
 class AlphaZeroAgentAdapter(BaseAgent):
-    """Scaffold adapter for future AlphaZero-vs-Athenan evaluation.
-
-    TODO: Wire AlphaZero MCTS + checkpoint inference once cross-engine match
-    protocol is fixed.
-    """
+    """Scaffold adapter for future AlphaZero-vs-Athenan evaluation."""
 
     def __init__(self, *, checkpoint_path: str | Path | None = None) -> None:
         self.checkpoint_path = None if checkpoint_path is None else Path(checkpoint_path)
