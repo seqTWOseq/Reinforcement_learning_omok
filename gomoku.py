@@ -278,7 +278,7 @@ def fast_rollout_fast(state, action, max_depth, max_moves=100):
     
 class KhyAgent:
     def __init__(self, model):
-        self.name = "Khy_AI"
+        self.name = "김현용"
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.0005, weight_decay=1e-4)
@@ -750,44 +750,102 @@ class AlphaZeroAgent:
 # ==========================================
 def main():
     env = OmokEnvGUI(render_mode="human")
-    # 김현용
-    khy_model = DualHeadResOmokCNN()
-    agent1 = KhyAgent(khy_model)
-    agent1.load_model("khy_omok_levelup.pth")
-    agent1.eval_mode()
 
-    # ================================================================
-    # NamiAI와 대결하고 싶으면:
-    #   1. nami.pth 가중치 파일을 이 폴더에 받아주세요
-    #   2. 아래 주석(agent1 = NamiAgent(...))을 풀고
-    #      그 아래 agent1 = AlphaZeroAgent(...) 줄을 주석 처리하세요
-    #   3. while 루프 안의 주석도 풀고 아래 줄을 주석 처리하세요
-    #      # action = agent1.select_action(state)  ← 이 줄 주석 해제
-    #      action = agent1.select_action(state, player_id=1)  ← 이 줄 주석 처리
-    # ================================================================
-    # agent1 = NamiAgent(name="NamiAI(🐟)")
-    # agent1 = AlphaZeroAgent(name="AlphaZero(🤖)")
-    agent2 = NegamaxAthenanAgent() # 신용님
+    # =======================
+    # Agent1 선택
+    # =======================
+
+    '''김신용(player_id 필요)'''
+    # agent1 = NegamaxAthenanAgent()
+
+
+    '''김현용'''
+    # khy_model = DualHeadResOmokCNN()
+    # agent1 = KhyAgent(khy_model)
+    # agent1.load_model("khy_omok_levelup.pth")
+    # agent1.eval_mode()
+
+
+    '''박종건(player_id 필요)'''
+    agent1 = PJGModel2()
+
+
+    '''정마나미'''
+    # agent1 = NamiAgent(name="정마나미")
+
+
+    '''홍정우(player_id 필요)'''
+    # agent1 = AlphaZeroAgent(name="홍정우")
+
+
+    # =======================
+    # Agent2 선택
+    # =======================
+
+    '''김신용(player_id 필요)'''
+    agent2 = NegamaxAthenanAgent()
+
+
+    '''김현용'''
+    # khy_model = DualHeadResOmokCNN()
+    # agent2 = KhyAgent(khy_model)
+    # agent2.load_model("khy_omok_levelup.pth")
+    # agent2.eval_mode()
+
+
+    '''박종건(player_id 필요)'''
     # agent2 = PJGModel2()
+
+
+    '''정마나미'''
+    # agent2 = NamiAgent(name="정마나미")
+
+
+    '''홍정우(player_id 필요)'''
+    # agent2 = AlphaZeroAgent(name="홍정우")
 
     state, info = env.reset()
     env.render()
     terminated = False
+    move_count = 0
 
-    print(f"=== ⚔️ {agent1.name} vs {agent2} 대결 시작 ===")
+    print(f"===  {agent1.name} vs {agent2.name} 대결 시작 ===")
 
     while not terminated:
-        # 턴에 따른 상태 반전 논리 (상대는 항상 자신이 흑돌인 것처럼 착각하게 만듦)
         if info["current_player"] == 1:
-            # NamiAgent 사용 시 아래 주석을 풀고 그 아래 줄을 주석 처리하세요
-            action = agent1.select_action(state)
-            # action = agent1.select_action(state, player_id=1)
+            move_count += 1  # 턴 수 증가
+            current_agent_name = agent1.name
+            
+            # =======================
+            # Agent1 선택
+            # =======================
+            
+            '''김신용, 박종건, 홍정우'''
+            action = agent1.select_action(state, player_id=1)
+
+
+            '''김현용, 정마나미'''
+            # action = agent1.select_action(state)
+
         else:
             inverted_state = np.where(state == 1, 2, np.where(state == 2, 1, 0))
-            # action = agent2.select_action(inverted_state, player_id=2)
-            # action = agent2.select_action(inverted_state, player_id=2)
-            action = agent2.select_action(state, player_id=2)
-            
+            current_agent_name = agent2.name
+
+            # =======================
+            # Agent2 선택
+            # =======================
+
+            '''김신용, 박종건, 홍정우'''
+            action = agent2.select_action(inverted_state, player_id=2)
+
+
+            '''김현용, 정마나미'''
+            # action = agent2.select_action(inverted_state)
+
+
+        # 누가 어디에 뒀는지 출력
+        print(f"[{move_count}수] (Player {current_agent_name}[{info["current_player"]}]) -> 선택한 위치: {action}")
+
         state, reward, terminated, _, info = env.step(action)
         env.render()
         time.sleep(1) # 시각적 확인을 위한 지연
@@ -796,7 +854,7 @@ def main():
     print("\n=== 🏁 대결 종료 ===")
     winner = info.get("winner")
     if winner == 1: print(f"🎉 {agent1.name} 승리!")
-    elif winner == 2: print(f"🎉 {agent2.name} 승리! (중앙 선호 전략)")
+    elif winner == 2: print(f"🎉 {agent2.name} 승리!")
     else: print("🤝 무승부!")
         
     time.sleep(3)

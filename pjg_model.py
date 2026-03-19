@@ -1010,7 +1010,7 @@ class PJGModel2:
         self,
         model_path: str = "gomoku_models/gomoku_ppo_final.pth",
         model_dir: str = "gomoku_models",
-        name: str = "PJG_PPO(⚙️)",
+        name: str = "박종건",
         device_str: str = "auto",
     ):
         self.name = name

@@ -1470,7 +1470,7 @@ class NegamaxAthenanAgent:
     def __init__(
         self,
         *,
-        name: str = "Negamax-Athenan",
+        name: str = "김신용",
         evaluator: GreedyHeuristicEvaluator | None = None,
         max_depth: int = 4,
         candidate_radius: int = 2,
