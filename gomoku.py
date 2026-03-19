@@ -17,6 +17,8 @@ from hjw_model import AlphaZeroNet
 from hjw_model import MCTS
 from hjw_model import GomokuGame
 from jmnm_model import board_to_tensor as nami_board_to_tensor, load_nami_model
+from ksy_model import NegamaxAthenanAgent
+from pjg_model import PJGModel2
 
 
 # ==========================================
@@ -748,12 +750,11 @@ class AlphaZeroAgent:
 # ==========================================
 def main():
     env = OmokEnvGUI(render_mode="human")
-    # agent1 = HumanAgent(env, name="Human_Black(●)")
     # 김현용
     khy_model = DualHeadResOmokCNN()
-    agent2 = KhyAgent(khy_model)
-    # agent1.load_model("khy_omok_gen2_final.pth")
-    agent2.eval_mode()
+    agent1 = KhyAgent(khy_model)
+    agent1.load_model("khy_omok_levelup.pth")
+    agent1.eval_mode()
 
     # ================================================================
     # NamiAI와 대결하고 싶으면:
@@ -765,24 +766,27 @@ def main():
     #      action = agent1.select_action(state, player_id=1)  ← 이 줄 주석 처리
     # ================================================================
     # agent1 = NamiAgent(name="NamiAI(🐟)")
-    agent1 = AlphaZeroAgent(name="AlphaZero(🤖)")
+    # agent1 = AlphaZeroAgent(name="AlphaZero(🤖)")
+    agent2 = NegamaxAthenanAgent() # 신용님
+    # agent2 = PJGModel2()
 
     state, info = env.reset()
     env.render()
     terminated = False
 
-    print(f"=== ⚔️ {agent1.name} vs {agent2.name} 대결 시작 ===")
+    print(f"=== ⚔️ {agent1.name} vs {agent2} 대결 시작 ===")
 
     while not terminated:
         # 턴에 따른 상태 반전 논리 (상대는 항상 자신이 흑돌인 것처럼 착각하게 만듦)
         if info["current_player"] == 1:
             # NamiAgent 사용 시 아래 주석을 풀고 그 아래 줄을 주석 처리하세요
-            # action = agent1.select_action(state)
-            action = agent1.select_action(state, player_id=1)
+            action = agent1.select_action(state)
+            # action = agent1.select_action(state, player_id=1)
         else:
             inverted_state = np.where(state == 1, 2, np.where(state == 2, 1, 0))
-            action = agent2.select_action(inverted_state)
-            # action = agent2.select_action(state, player_id=2)
+            # action = agent2.select_action(inverted_state, player_id=2)
+            # action = agent2.select_action(inverted_state, player_id=2)
+            action = agent2.select_action(state, player_id=2)
             
         state, reward, terminated, _, info = env.step(action)
         env.render()

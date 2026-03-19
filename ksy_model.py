@@ -356,8 +356,11 @@ class GreedyHeuristicEvaluator:
         if env.done or not env.is_legal_action(action):
             return False
 
-        row, col = env.action_to_coord(int(action))
-        return self._projected_max_line_length(env, row, col, player) >= 5
+        return float(
+            self.score_patterns_for_player(env, player)
+            + (self.config.center_weight * self._score_center_control(env, player))
+            + (self.config.connectivity_weight * self._score_connectivity(env, player))
+        )
 
     def _score_player(self, env: GomokuEnv, player: int) -> float:
         return float(
@@ -1470,7 +1473,7 @@ class NegamaxAthenanAgent:
         name: str = "Negamax-Athenan",
         evaluator: GreedyHeuristicEvaluator | None = None,
         max_depth: int = 4,
-        candidate_radius: int = 4,
+        candidate_radius: int = 2,
         max_candidates: int | None = 16,
         use_alpha_beta: bool = True,
         use_iterative_deepening: bool = True,
