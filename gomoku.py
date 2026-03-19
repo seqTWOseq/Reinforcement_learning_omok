@@ -369,7 +369,7 @@ class KhyAgent:
         self.name = "Khy_AI"
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=0.0002, weight_decay=1e-4)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=0.0001, weight_decay=1e-4)
 
         self.is_training = True
         
@@ -379,8 +379,8 @@ class KhyAgent:
         self.epsilon_decay = 0.999
         
         # 경험 재생 메모리
-        self.win_memory = deque(maxlen=12000)
-        self.loss_memory = deque(maxlen=12000)
+        self.win_memory = deque(maxlen=50000)
+        self.loss_memory = deque(maxlen=50000)
         self.batch_size = 1024
         self.gamma = 0.99
     
@@ -709,7 +709,7 @@ def main():
     
     model = DualHeadResOmokCNN()
     agent1 = KhyAgent(model)
-    agent1.load_model("khy_omok_levelup.pth")
+    agent1.load_model("khy_omok_ep2500.pth")
     agent1.eval_mode()
     
     state, info = env.reset()
@@ -784,16 +784,16 @@ def train_main():
     # 학습할 메인 에이전트
     model1 = DualHeadResOmokCNN()  
     agent1 = KhyAgent(model1)
-    # agent1.load_model("khy_omok_ep2000.pth")
+    agent1.load_model("khy_omok_first_heu.pth")
     print(f"[Device 확인] {agent1.device}")
     agent1.train_mode()
     
     # 셀프 대결을 위한 상대방 에이전트 (과거의 나)
-    # model2 = DualHeadResOmokCNN()
-    # agent2_self = KhyAgent(model2)
-    # agent2_self.model.load_state_dict(agent1.model.state_dict())
-    # agent2_self.eval_mode()
-    agent2_self = HeuristicAgent()
+    model2 = DualHeadResOmokCNN()
+    agent2_self = KhyAgent(model2)
+    agent2_self.model.load_state_dict(agent1.model.state_dict())
+    agent2_self.eval_mode()
+    # agent2_self = HeuristicAgent()
     
     N = 10
     EPISODES = 10000
@@ -929,7 +929,7 @@ def train_main():
             # --- 500판 종료 직후: 상대방 진화 및 탐험률 롤백 ---
             if phase_end < EPISODES: 
                 if win_rate >= 60.0 and decisive_games >= 100:
-                    agent1.save_model(f"khy_omok_hue.pth")
+                    agent1.save_model(f"khy_omok_levelup{gen}_{EPISODES}.pth")
                     agent2_self.model.load_state_dict(agent1.model.state_dict())
                     
                     # [수정] 승리/패배 메모리를 각각 비워줌
@@ -943,7 +943,7 @@ def train_main():
                 agent1.epsilon, agent1.epsilon_decay = 0.05, 0.992
                 print(f"[업데이트] {phase_end}판 종료: {update_msg} / [입실론 롤백: {agent1.epsilon:.3f}]\n")
                 
-            agent1.save_model(f"khy_omok_ep{phase_end}.pth")
+            agent1.save_model(f"episode/khy_omok_{gen}_ep{phase_end}.pth")
         
     print(f"\n=== 총 {N}세대({N * EPISODES}판)의 대장정 완료 ===")
     env.close()
