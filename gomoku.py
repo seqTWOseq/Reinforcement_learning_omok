@@ -710,8 +710,14 @@ class AlphaZeroAgent:
         # 신경망 뼈대를 만들고, 저장된 가중치(.pth)를 불러와서 덮어씌움
         self.model = AlphaZeroNet().to(device)
         try:
-            self.model.load_state_dict(torch.load(model_path, map_location=device))
-            self.model.eval() # 평가 모드
+            checkpoint = torch.load(model_path, map_location=device)
+            # AlphaZeroTrain에서 저장한 체크포인트 포맷(iteration, model_state_dict, optimizer_state_dict)
+            if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+                state_dict = checkpoint["model_state_dict"]
+            else:
+                state_dict = checkpoint  # 예전에 state_dict만 저장한 구버전
+            self.model.load_state_dict(state_dict)
+            self.model.eval()  # 평가 모드
             print(f"✅ '{model_path}' 알파제로 두뇌 장착 완료! (장치: {device})")
         except Exception as e:
             print(f"❌ 가중치 로드 실패: {e}\n임시로 랜덤하게 둡니다.")
