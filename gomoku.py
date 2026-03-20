@@ -284,13 +284,13 @@ def check_pattern_fast(state, r, c, player, target, open_ends_req):
     return False
 
 @njit
-def find_urgent_move_fast(state, valid_moves, player):
+def find_urgent_move_fast(state, valid_moves, num_valid, player):
     """C언어 속도로 동작하는 위급 수 탐색 함수 (Numba는 None을 쓸 수 없어 -1 반환)"""
     board_size = state.shape[0]
     opponent = 3 - player
     best_move = -1
 
-    for i in range(len(valid_moves)):
+    for i in range(num_valid):
         move = valid_moves[i]
         r = move // board_size
         c = move % board_size
@@ -300,7 +300,6 @@ def find_urgent_move_fast(state, valid_moves, player):
             return move
         
         # 2순위: 상대가 두면 바로 패배 (상대 5목 완성 차단)
-        # 단, 내가 당장 이길 수 있는 수가 있다면 그게 우선이므로 1순위 아래에 배치
         if best_move == -1 and check_pattern_fast(state, r, c, opponent, 5, 0):
             best_move = move
 
@@ -332,18 +331,30 @@ def fast_rollout_fast(state, action, max_depth, max_moves=100):
     num_valid = len(valid_moves)
 
     for depth in range(max_depth):
-        # 100수 도달 시 (사용자 요청: -0.4)
         if current_stones >= max_moves:
             return -0.8
             
-        # 판이 꽉 찼을 때 (자연 무승부)
         if num_valid == 0:
             return -0.8
         
-        idx = np.random.randint(num_valid)
-        sim_action = valid_moves[idx]
+        # 랜덤 착수 전, 위급한 수(승리/패배 직결)가 있는지 먼저 확인
+        urgent_move = find_urgent_move_fast(sim_state, valid_moves, num_valid, current_player)
         
-        valid_moves[idx] = valid_moves[num_valid - 1]
+        if urgent_move != -1:
+            # 위급한 수가 있다면 무조건 그곳에 착수 (시뮬레이션의 현실성 극대화)
+            sim_action = urgent_move
+            
+            # valid_moves 배열에서 선택된 수 제거 (Numba 최적화 방식)
+            for i in range(num_valid):
+                if valid_moves[i] == sim_action:
+                    valid_moves[i] = valid_moves[num_valid - 1]
+                    break
+        else:
+            # 위급한 수가 없다면 기존처럼 랜덤 착수 (탐험 유지)
+            idx = np.random.randint(num_valid)
+            sim_action = valid_moves[idx]
+            valid_moves[idx] = valid_moves[num_valid - 1]
+            
         num_valid -= 1
             
         sr = sim_action // board_size
@@ -351,22 +362,21 @@ def fast_rollout_fast(state, action, max_depth, max_moves=100):
         sim_state[sr, sc] = current_player
         current_stones += 1 
         
+        # 승패 판정
         if check_pattern_fast(sim_state, sr, sc, current_player, 5, 0):
             penalty = depth * depth_penalty_weight
             if current_player == 1:
-                # 늦게 이길수록 보상이 깎여서 100수 제한(-0.4)에 가까워짐
                 return max(-0.39, 1.0 - penalty) 
             else:
                 return min(0.39, -1.0 + penalty) 
             
         current_player = 3 - current_player
         
-    # 메모리의 무승부 기준(-0.2)을 반환하여 중립적인 가치를 부여
     return -0.8
     
 class KhyAgent:
     def __init__(self, model):
-        self.name = "Khy_AI"
+        self.name = "김현용"
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.00005, weight_decay=1e-4)
@@ -447,7 +457,7 @@ class KhyAgent:
                         sensible_moves.add(nr * board_size + nc)
         valid_moves = np.array(list(sensible_moves))
             
-        urgent_move = find_urgent_move_fast(state, valid_moves, player=1)
+        urgent_move = find_urgent_move_fast(state, valid_moves, len(valid_moves), player=1)
         if urgent_move != -1: 
             return urgent_move
 
@@ -464,15 +474,20 @@ class KhyAgent:
         policy_logits[valid_mask] = -float('inf')
         policy_probs = F.softmax(policy_logits, dim=0).cpu().numpy()
 
+        # 사용 가능 칸 제한
+        K = min(5, len(valid_moves))
+        top_k_indices = np.argsort(policy_probs[valid_moves])[-K:]
+        pruned_valid_moves = valid_moves[top_k_indices]
+
         # Rollout 결과
-        num_simulations = 1000
+        num_simulations = 500
         action_visits = np.zeros(total_grids)
         action_wins = np.zeros(total_grids)
 
         for _ in range(num_simulations):
-            probs = policy_probs[valid_moves]
+            probs = policy_probs[pruned_valid_moves] 
             probs /= np.sum(probs)
-            sim_action = np.random.choice(valid_moves, p=probs)
+            sim_action = np.random.choice(pruned_valid_moves, p=probs)
             
             reward = fast_rollout_fast(state, sim_action, max_depth=30)
             action_visits[sim_action] += 1
@@ -481,10 +496,9 @@ class KhyAgent:
         raw_rollout_values = np.divide(action_wins, action_visits, out=np.zeros_like(action_wins), where=action_visits!=0)
 
         # 가치 일괄 평가
-        num_valid = len(valid_moves)
-        next_states_batch = np.zeros((num_valid, 1, board_size, board_size), dtype=np.float32)
+        next_states_batch = np.zeros((K, 1, board_size, board_size), dtype=np.float32)
         
-        for i, move in enumerate(valid_moves):
+        for i, move in enumerate(pruned_valid_moves):
             r, c = move // board_size, move % board_size
             next_state = state.copy()
             next_state[r, c] = 1 
@@ -497,39 +511,38 @@ class KhyAgent:
             next_values = next_values.flatten().cpu().numpy()
             
         raw_cnn_values = np.zeros(total_grids)
-        raw_cnn_values[valid_moves] = -1.0 * next_values # 내 입장에서 부호 반전
+        raw_cnn_values[pruned_valid_moves] = -1.0 * next_values # 내 입장에서 부호 반전
 
         # 내재적 보상(Intrinsic)
         raw_intrinsic_rewards = np.zeros(total_grids)
-        for move in valid_moves:
+        for move in pruned_valid_moves:
             raw_intrinsic_rewards[move] = self.get_intrinsic_reward(state, move)
 
         # 정규화
-        norm_policy   = self._normalize_to_range(policy_probs, valid_moves)
-        norm_rollout  = self._normalize_to_range(raw_rollout_values, valid_moves)
-        norm_value    = self._normalize_to_range(raw_cnn_values, valid_moves)
-        norm_int      = self._normalize_to_range(raw_intrinsic_rewards, valid_moves)
+        norm_policy   = self._normalize_to_range(policy_probs, pruned_valid_moves)
+        norm_rollout  = self._normalize_to_range(raw_rollout_values, pruned_valid_moves)
+        norm_value    = self._normalize_to_range(raw_cnn_values, pruned_valid_moves)
+        norm_int      = self._normalize_to_range(raw_intrinsic_rewards, pruned_valid_moves)
         
-        w_policy  = 0.15
-        w_rollout = 0.30
+        w_policy  = 0.25
+        w_rollout = 0.25
         w_value   = 0.25
-        w_int     = 0.30
+        w_int     = 0.25
 
         # 최종 스코어 계산 (모든 값이 -1 ~ 1 스케일을 가짐)
-        final_score = np.where(
-            np.isin(np.arange(total_grids), valid_moves), 
-            (w_policy * norm_policy) + 
-            (w_rollout * norm_rollout) + 
-            (w_value * norm_value) + 
-            (w_int * norm_int), 
-            -float('inf')
+        final_score = np.full(total_grids, -float('inf'))
+        final_score[pruned_valid_moves] = (
+            (w_policy * norm_policy[pruned_valid_moves]) + 
+            (w_rollout * norm_rollout[pruned_valid_moves]) + 
+            (w_value * norm_value[pruned_valid_moves]) + 
+            (w_int * norm_int[pruned_valid_moves])
         )
         
         if self.is_training and np.random.rand() < self.epsilon:
-            top_k = min(7, len(valid_moves))
-            sorted_indices = np.argsort(final_score)[-top_k:]
+            top_k_explore = min(3, len(pruned_valid_moves))
+            sorted_indices = np.argsort(final_score[pruned_valid_moves])[-top_k_explore:]
             chosen_idx = np.random.choice(sorted_indices)
-            return int(chosen_idx)
+            return int(pruned_valid_moves[chosen_idx])
         else:
             return int(np.argmax(final_score))
     
@@ -576,7 +589,7 @@ class KhyAgent:
             
             # 양수겸장 판단 (최대 1.0을 넘지 않도록 조정)
             if pattern_counts['four'] >= 2 or (pattern_counts['four'] >= 1 and pattern_counts['open_3'] >= 1) or pattern_counts['open_3'] >= 2:
-                score = max(score, 0.3)
+                score = max(score, 0.8)
                 
             return score
 
@@ -584,10 +597,14 @@ class KhyAgent:
         attack_value = evaluate_for_player(1) 
         
         # 수비 가치 (상대가 두었을 때의 파괴력을 사전에 차단)
-        defense_value = evaluate_for_player(2) 
+        defense_value = evaluate_for_player(2)
+
+        intersection_bonus = 0.0
+        if attack_value >= 0.15 and defense_value >= 0.15:
+            intersection_bonus = 0.3
         
-        # 공격과 수비를 합치되, 절대 1.0을 넘지 않도록 강력한 상한선(Clipping) 적용
-        total_reward = min((attack_value * 1.1) + defense_value, 1.0)
+        # 최종 스코어 결합 (상한선 1.0 유지)
+        total_reward = min((attack_value * 1.1) + defense_value + intersection_bonus, 1.0)
         
         return total_reward
     
@@ -716,12 +733,12 @@ class KhyAgent:
 # ==========================================
 def main():
     env = OmokEnvGUI(render_mode="human")
-    agent2 = HumanAgent(env)
+    agent2 = HeuristicAgent()
     
     
     model = DualHeadResOmokCNN()
     agent1 = KhyAgent(model)
-    agent1.load_model("khy_omok_ep2500.pth")
+    agent1.load_model("episode/khy_omok_2_ep4000.pth")
     agent1.eval_mode()
     
     state, info = env.reset()
@@ -967,5 +984,5 @@ def train_main():
 # 4. 메인
 # ==========================================
 if __name__ == "__main__":
-    # main()
-    train_main()
+    main()
+    # train_main()
