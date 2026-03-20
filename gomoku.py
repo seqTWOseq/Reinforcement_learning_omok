@@ -288,7 +288,7 @@ def fast_rollout_fast(state, action, max_depth, max_moves=100):
     
 class KhyAgent:
     def __init__(self, model):
-        self.name = "Khy_AI"
+        self.name = "김현용"
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.0001, weight_decay=1e-4)
@@ -806,14 +806,14 @@ def main():
 
 
     '''김현용'''
-    # khy_model = DualHeadResOmokCNN()
-    # agent1 = KhyAgent(khy_model)
-    # agent1.load_model("khy_omok_levelup.pth")
-    # agent1.eval_mode()
+    khy_model = DualHeadResOmokCNN()
+    agent1 = KhyAgent(khy_model)
+    agent1.load_model("khy_omok_first_heu.pth")
+    agent1.eval_mode()
 
 
     '''박종건(player_id 필요)'''
-    agent1 = PJGModel2()
+    # agent1 = PJGModel2()
 
 
     '''정마나미'''
@@ -829,7 +829,7 @@ def main():
     # =======================
 
     '''김신용(player_id 필요)'''
-    agent2 = NegamaxAthenanAgent()
+    # agent2 = NegamaxAthenanAgent()
 
 
     '''김현용'''
@@ -844,7 +844,7 @@ def main():
 
 
     '''정마나미'''
-    # agent2 = NamiAgent(name="정마나미")
+    agent2 = NamiAgent(name="정마나미")
 
 
     '''홍정우(player_id 필요)'''
@@ -867,11 +867,11 @@ def main():
             # =======================
             
             '''김신용, 박종건, 홍정우'''
-            action = agent1.select_action(state, player_id=1)
+            # action = agent1.select_action(state, player_id=1)
 
 
             '''김현용, 정마나미'''
-            # action = agent1.select_action(state)
+            action = agent1.select_action(state)
 
         else:
             inverted_state = np.where(state == 1, 2, np.where(state == 2, 1, 0))
@@ -882,11 +882,11 @@ def main():
             # =======================
 
             '''김신용, 박종건, 홍정우'''
-            action = agent2.select_action(inverted_state, player_id=2)
+            # action = agent2.select_action(inverted_state, player_id=2)
 
 
             '''김현용, 정마나미'''
-            # action = agent2.select_action(inverted_state)
+            action = agent2.select_action(inverted_state)
 
 
         # 누가 어디에 뒀는지 출력
