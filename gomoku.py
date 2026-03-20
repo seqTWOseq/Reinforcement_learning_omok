@@ -733,12 +733,12 @@ class KhyAgent:
 # ==========================================
 def main():
     env = OmokEnvGUI(render_mode="human")
-    agent2 = HeuristicAgent()
+    agent2 = HumanAgent(env)
     
     
     model = DualHeadResOmokCNN()
     agent1 = KhyAgent(model)
-    agent1.load_model("episode/khy_omok_2_ep4000.pth")
+    agent1.load_model("khy_omok_levelup.pth")
     agent1.eval_mode()
     
     state, info = env.reset()
