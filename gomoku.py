@@ -196,13 +196,13 @@ def check_pattern_fast(state, r, c, player, target, open_ends_req):
     return False
 
 @njit
-def find_urgent_move_fast(state, valid_moves, player):
+def find_urgent_move_fast(state, valid_moves, num_valid, player):
     """C언어 속도로 동작하는 위급 수 탐색 함수 (Numba는 None을 쓸 수 없어 -1 반환)"""
     board_size = state.shape[0]
     opponent = 3 - player
     best_move = -1
 
-    for i in range(len(valid_moves)):
+    for i in range(num_valid):
         move = valid_moves[i]
         r = move // board_size
         c = move % board_size
@@ -218,61 +218,41 @@ def find_urgent_move_fast(state, valid_moves, player):
     return best_move
 
 @njit
-def fast_rollout_fast(state, action, max_depth, max_moves=100):
-    """극단적으로 최적화된 초고속 MCTS 시뮬레이션 엔진"""
+def fast_rollout_fast(state, action, max_depth, max_moves=225):
+    """극단적으로 최적화된 초고속 MCTS 시뮬레이션 엔진 (순수 랜덤 탐색으로 회귀)"""
     board_size = state.shape[0]
     sim_state = state.copy()
     r = action // board_size
     c = action % board_size
     sim_state[r, c] = 1 
     
-    current_stones = 0
-    for i in range(board_size):
-        for j in range(board_size):
-            if sim_state[i, j] != 0:
-                current_stones += 1
-                
-    # 내가 방금 둔 수로 즉시 승리
+    # 내가 방금 둔 수로 즉시 승리하는지만 확인
     if check_pattern_fast(sim_state, r, c, 1, 5, 0):
         return 1.0 
         
     current_player = 2
     depth_penalty_weight = 0.01
 
-    valid_moves = np.where(sim_state.flatten() == 0)[0]
+    # Numba 속도를 극대화하기 위한 1차원 배열 연산
+    flat_state = sim_state.flatten()
+    valid_moves = np.where(flat_state == 0)[0]
     num_valid = len(valid_moves)
 
     for depth in range(max_depth):
-        if current_stones >= max_moves:
-            return -0.8
-            
         if num_valid == 0:
             return -0.8
-        
-        # 랜덤 착수 전, 위급한 수(승리/패배 직결)가 있는지 먼저 확인
-        urgent_move = find_urgent_move_fast(sim_state, valid_moves[:num_valid], current_player)
-        
-        if urgent_move != -1:
-            # 위급한 수가 있다면 무조건 그곳에 착수 (시뮬레이션의 현실성 극대화)
-            sim_action = urgent_move
             
-            # valid_moves 배열에서 선택된 수 제거 (Numba 최적화 방식)
-            for i in range(num_valid):
-                if valid_moves[i] == sim_action:
-                    valid_moves[i] = valid_moves[num_valid - 1]
-                    break
-        else:
-            # 위급한 수가 없다면 기존처럼 랜덤 착수 (탐험 유지)
-            idx = np.random.randint(num_valid)
-            sim_action = valid_moves[idx]
-            valid_moves[idx] = valid_moves[num_valid - 1]
-            
+        # [핵심 수정] 위급수 탐색(수백만 번 연산) 제거 -> 순수 랜덤 롤아웃
+        idx = np.random.randint(num_valid)
+        sim_action = valid_moves[idx]
+        
+        # 선택한 수는 배열 맨 끝 값으로 덮어씌워서 O(1) 속도로 제거
+        valid_moves[idx] = valid_moves[num_valid - 1]
         num_valid -= 1
             
         sr = sim_action // board_size
         sc = sim_action % board_size
         sim_state[sr, sc] = current_player
-        current_stones += 1 
         
         # 승패 판정
         if check_pattern_fast(sim_state, sr, sc, current_player, 5, 0):
@@ -291,7 +271,7 @@ class KhyAgent:
         self.name = "김현용"
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=0.0001, weight_decay=1e-4)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=0.00005, weight_decay=1e-4)
 
         self.is_training = True
         
@@ -369,7 +349,7 @@ class KhyAgent:
                         sensible_moves.add(nr * board_size + nc)
         valid_moves = np.array(list(sensible_moves))
             
-        urgent_move = find_urgent_move_fast(state, valid_moves, player=1)
+        urgent_move = find_urgent_move_fast(state, valid_moves, len(valid_moves), player=1)
         if urgent_move != -1: 
             return urgent_move
 
@@ -387,12 +367,12 @@ class KhyAgent:
         policy_probs = F.softmax(policy_logits, dim=0).cpu().numpy()
 
         # 사용 가능 칸 제한
-        K = min(8, len(valid_moves))
+        K = min(5, len(valid_moves))
         top_k_indices = np.argsort(policy_probs[valid_moves])[-K:]
         pruned_valid_moves = valid_moves[top_k_indices]
 
         # Rollout 결과
-        num_simulations = 400
+        num_simulations = 500
         action_visits = np.zeros(total_grids)
         action_wins = np.zeros(total_grids)
 
@@ -569,14 +549,26 @@ class KhyAgent:
     # ====================
     # 복습 엔진
     def replay_experience(self):
+        # 1. 전체 메모리 합이 배치 사이즈보다 작으면 학습을 시작하지 않음
         if len(self.win_memory) + len(self.loss_memory) < self.batch_size:
             return 0.0, 0.0
-            return 0.0, 0.0 # 학습을 안 했을 때는 0 반환
+
+        # 2. 목표로 하는 샘플링 비율 (예: 5:5)
+        target_win_size = self.batch_size // 2
         
-        win_sample_size = min(len(self.win_memory), self.batch_size // 2)
-        loss_sample_size = self.batch_size - win_sample_size # 모자란 만큼 패배 데이터로 채움
+        # 3. [승리 메모리 안전장치] 실제 가진 개수와 목표 중 작은 값을 선택
+        win_sample_size = min(len(self.win_memory), target_win_size)
+        
+        # 4. [패배 메모리 안전장치] 남은 자리를 패배 데이터로 채우되, 실제 개수를 넘지 않게 함
+        target_loss_size = self.batch_size - win_sample_size
+        loss_sample_size = min(len(self.loss_memory), target_loss_size)
+        
+        # 5. 혹시나 부족한 자리가 있다면 승리 메모리에서 더 가져옴 (보완책)
+        if win_sample_size + loss_sample_size < self.batch_size:
+            win_sample_size = min(len(self.win_memory), self.batch_size - loss_sample_size)
 
         minibatch = []
+
         if win_sample_size > 0:
             minibatch.extend(random.sample(self.win_memory, win_sample_size))
         if loss_sample_size > 0:
